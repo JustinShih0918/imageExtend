@@ -1,0 +1,22 @@
+# Ignore all files in data directory
+data/**
+results_comparison/**
+checkpoints/**
+outputs/**
+
+# But keep these directories (via .gitkeep files)
+!data/
+!data/test/
+!data/train/
+!data/val/
+!data/test/.gitkeep
+!data/train/.gitkeep
+!data/val/.gitkeep
+!results_comparison/
+!checkpoints/
+!outputs/
+
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store

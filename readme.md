@@ -12,9 +12,6 @@ ImageExtend is a deep learning project that performs image outpainting (also kno
 
 ## Installation
 
-### Prerequisites
-- Anaconda or Miniconda
-
 ### Setup
 
 1. Clone the repository:
@@ -38,6 +35,11 @@ This will create a conda environment called `imgext` with all required dependenc
 conda activate imgext
 ```
 
+#### To deactivate
+```bash
+conda deactivate
+```
+
 ### Training
 
 1. Place your training images in the `data/train` directory
@@ -48,12 +50,21 @@ python train.py
 
 Training progress will be displayed, and sample outputs will be saved in the `outputs` directory. Model checkpoints are saved in the `checkpoints` directory.
 
+### Testing
+```bash
+python test.py
+```
+you can choose your pth file at line 17
+```python
+G.load_state_dict(torch.load("checkpoints/your_model_path.pth", map_location=device))
+```
+it will should the L1 loss, PSNR, SSIM to the terminal
+
 ## Project Structure
 
 - `models/` - Contains the generator and discriminator model architectures
 - `datasets/` - Dataset loading and processing code
 - `train.py` - Main training script
-- `infer.py` - Script for inference on new images
 - `env_setup.sh` - Environment setup script
 - `requirements.txt` - Python package dependencies
 

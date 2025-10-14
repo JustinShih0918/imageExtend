@@ -19,7 +19,7 @@ ImageExtend is a deep learning project that performs image outpainting (also kno
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/JustinShih0918/imageExtend.git
 cd imageExtend
 ```
 

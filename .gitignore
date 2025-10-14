@@ -12,10 +12,16 @@ outputs/**
 !data/test/.gitkeep
 !data/train/.gitkeep
 !data/val/.gitkeep
-!results_comparison/
-!checkpoints/
-!outputs/
 
+# Keep these empty directories
+!results_comparison/
+!results_comparison/.gitkeep
+!checkpoints/
+!checkpoints/.gitkeep
+!outputs/
+!outputs/.gitkeep
+
+# Python cache files
 __pycache__/
 *.py[cod]
 *$py.class

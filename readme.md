@@ -76,7 +76,7 @@ python test.py --test_dir data/test --output_dir results_comparison --mask_mode 
 You can change some parameter's value.
 `--test_dir` (default: data/test)：Folder containing test images.
 
-`--output_dir` (default: results_compparison)：Where the side-by-side grids are saved, [masked input | generated | ground truth].
+`--output_dir` (default: results_compparison)：Where the side-by-side grids are saved, [masked input | mask | generated | ground truth].
 
 `--image_size` (default: 256)：Images are resized to (image_size, image_size) before inference.
 

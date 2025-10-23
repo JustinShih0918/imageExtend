@@ -172,9 +172,9 @@ def main():
             crop_ratio_w = args.center_crop_w / max(1, args.center_full_w)
             crop_h = max(1, int(round(H * crop_ratio_h)))
             crop_w = max(1, int(round(W * crop_ratio_w)))
-            mask = make_center_crop_border_mask(H, W, crop_h, crop_w).to(device)  # (1,1,H,W)
+            mask = make_center_crop_border_mask(H, W, crop_h, crop_w).unsqueeze(0).to(device)  # (1,1,H,W)
         else:
-            mask = make_random_border_mask(H, W, max_ratio=0.25).to(device)       # (1,1,H,W)
+            mask = make_random_border_mask(H, W, max_ratio=0.25).unsqueeze(0).to(device)       # (1,1,H,W)
 
         # Condition: concatenate masked image + mask
         masked = img_t * (1 - mask)                     # (1,3,H,W)

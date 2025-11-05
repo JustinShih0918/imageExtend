@@ -33,30 +33,20 @@ class ImageFolderWithMask(Dataset):
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
         
         print("Scanning images...")
-        count = 0
+        
+        # Fast scan: just collect files with valid extensions and size
+        # Bad images will be handled by error recovery in __getitem__
         for p in root.rglob("*"):
-            count += 1
-            if count % 1000 == 0:
-                print(f"Scanned {count} files...")
-            
             if p.suffix.lower() in exts and p.is_file():
                 try:
-                    # Check file size
-                    if p.stat().st_size < min_bytes:
-                        continue
-                    
-                    # 1) Verify image structure
-                    with Image.open(p) as im:
-                        im.verify()
-                    
-                    # 2) Reopen and actually decode to ensure load/convert works
-                    with Image.open(p) as im:
-                        im.load()
-                    
-                    self.paths.append(p)
-                except Exception:
-                    # Skip broken images silently
+                    # Only check file size (very fast, no image opening)
+                    if p.stat().st_size >= min_bytes:
+                        self.paths.append(p)
+                except (OSError, PermissionError):
+                    # Skip files we can't access
                     continue
+        
+        print(f"Found {len(self.paths)} image files")
 
         if not self.paths:
             raise FileNotFoundError(f"No valid images found in {root.resolve()}")

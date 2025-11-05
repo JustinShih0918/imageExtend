@@ -1,66 +1,81 @@
+# models/generator.py
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as TF
+
+
+def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=True, leaky=True):
+    """Convolution block with optional normalization and activation."""
+    layers = [nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=not norm)]
+    if norm:
+        layers.append(nn.BatchNorm2d(out_ch))
+    layers.append(nn.LeakyReLU(0.2, inplace=True) if leaky else nn.ReLU(inplace=True))
+    return nn.Sequential(*layers)
+
+
+def deconv_block(in_ch, out_ch, ks=4, stride=2, pad=1, dropout=False):
+    """Transposed convolution block with batch normalization and optional dropout."""
+    layers = [
+        nn.ConvTranspose2d(in_ch, out_ch, ks, stride, pad, bias=False),
+        nn.BatchNorm2d(out_ch),
+        nn.ReLU(inplace=True),
+    ]
+    if dropout:
+        layers.append(nn.Dropout(0.5))
+    return nn.Sequential(*layers)
+
 
 class UNetGenerator(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, features=64):
+    """
+    U-Net Generator for image inpainting.
+    
+    Input:  (N, 4, H, W) = [masked_rgb(3) + mask(1)] in [0,1] for RGB, {0,1} for mask
+    Output: (N, 3, H, W) in [-1, 1]
+    
+    Args:
+        in_ch: Number of input channels (default: 4 for RGB + mask)
+        out_ch: Number of output channels (default: 3 for RGB)
+        ngf: Number of generator filters in first conv layer (default: 64)
+    """
+    def __init__(self, in_ch=4, out_ch=3, ngf=64):
         super().__init__()
-
-        def down(in_c, out_c, norm=True):
-            layers = [nn.Conv2d(in_c, out_c, 4, 2, 1, bias=False)]
-            if norm:
-                layers.append(nn.BatchNorm2d(out_c))
-            layers.append(nn.LeakyReLU(0.2))
-            return nn.Sequential(*layers)
-
-            # up: ConvTranspose -> BN -> ReLU
-        def up(in_c, out_c, dropout=False):
-            layers = [
-                nn.ConvTranspose2d(in_c, out_c, 4, 2, 1, bias=False),
-                nn.BatchNorm2d(out_c),
-                nn.ReLU()
-            ]
-            if dropout:
-                layers.append(nn.Dropout(0.5))
-            return nn.Sequential(*layers)
-
         # Encoder
-        self.down1 = down(in_channels, features, norm=False)
-        self.down2 = down(features, features * 2)
-        self.down3 = down(features * 2, features * 4)
-        self.down4 = down(features * 4, features * 8)
-        self.down5 = down(features * 8, features * 8)
-        self.down6 = down(features * 8, features * 8)
+        self.e1 = nn.Sequential(nn.Conv2d(in_ch, ngf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=True))
+        self.e2 = conv_block(ngf, ngf*2)
+        self.e3 = conv_block(ngf*2, ngf*4)
+        self.e4 = conv_block(ngf*4, ngf*8)
+        self.e5 = conv_block(ngf*8, ngf*8)
+        self.e6 = conv_block(ngf*8, ngf*8)
+        self.e7 = conv_block(ngf*8, ngf*8)
+        self.e8 = nn.Sequential(nn.Conv2d(ngf*8, ngf*8, 4, 2, 1), nn.ReLU(inplace=True))
 
-        # Decoder
-        self.up1 = up(features * 8, features * 8, dropout=True)
-        self.up2 = up(features * 16, features * 8, dropout=True)
-        self.up3 = up(features * 16, features * 4)
-        self.up4 = up(features * 8, features * 2)
-        self.up5 = up(features * 4, features)
-        self.up6 = nn.Sequential(
-            nn.ConvTranspose2d(features * 2, out_channels, 4, 2, 1),
-            nn.Tanh()
-        )
-
-    def crop_and_concat(self, upsampled, bypass):
-        # crop bypass to match upsampled size (handles odd/non-square shapes)
-        _, _, H, W = upsampled.shape
-        bypass = TF.center_crop(bypass, [H, W])
-        return torch.cat([upsampled, bypass], dim=1)
+        # Decoder with skip connections
+        self.d1 = deconv_block(ngf*8, ngf*8, dropout=True)
+        self.d2 = deconv_block(ngf*8*2, ngf*8, dropout=True)
+        self.d3 = deconv_block(ngf*8*2, ngf*8, dropout=True)
+        self.d4 = deconv_block(ngf*8*2, ngf*8)
+        self.d5 = deconv_block(ngf*8*2, ngf*4)
+        self.d6 = deconv_block(ngf*4*2, ngf*2)
+        self.d7 = deconv_block(ngf*2*2, ngf)
+        self.out = nn.Sequential(nn.ConvTranspose2d(ngf*2, out_ch, 4, 2, 1), nn.Tanh())
 
     def forward(self, x):
-        d1 = self.down1(x)
-        d2 = self.down2(d1)
-        d3 = self.down3(d2)
-        d4 = self.down4(d3)
-        d5 = self.down5(d4)
-        d6 = self.down6(d5)
+        # Encoder
+        e1 = self.e1(x)
+        e2 = self.e2(e1)
+        e3 = self.e3(e2)
+        e4 = self.e4(e3)
+        e5 = self.e5(e4)
+        e6 = self.e6(e5)
+        e7 = self.e7(e6)
+        e8 = self.e8(e7)
 
-        u1 = self.up1(d6)
-        u2 = self.up2(self.crop_and_concat(u1, d5))
-        u3 = self.up3(self.crop_and_concat(u2, d4))
-        u4 = self.up4(self.crop_and_concat(u3, d3))
-        u5 = self.up5(self.crop_and_concat(u4, d2))
-        out = self.up6(self.crop_and_concat(u5, d1))
-        return out
+        # Decoder with skip connections
+        d1 = self.d1(e8)
+        d2 = self.d2(torch.cat([d1, e7], dim=1))
+        d3 = self.d3(torch.cat([d2, e6], dim=1))
+        d4 = self.d4(torch.cat([d3, e5], dim=1))
+        d5 = self.d5(torch.cat([d4, e4], dim=1))
+        d6 = self.d6(torch.cat([d5, e3], dim=1))
+        d7 = self.d7(torch.cat([d6, e2], dim=1))
+        out = self.out(torch.cat([d7, e1], dim=1))
+        return out  # Output in [-1, 1]

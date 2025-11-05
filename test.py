@@ -1,11 +1,9 @@
 # test.py
 import os
-import math
 import argparse
 from pathlib import Path
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -14,88 +12,31 @@ from PIL import Image
 # pip install pytorch-msssim
 from pytorch_msssim import ssim as ssim_fn
 
-# =============== Models (same as train.py) ===============
-def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=True, leaky=True):
-    layers = [nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=not norm)]
-    if norm:
-        layers.append(nn.BatchNorm2d(out_ch))
-    layers.append(nn.LeakyReLU(0.2, inplace=True) if leaky else nn.ReLU(inplace=True))
-    return nn.Sequential(*layers)
+# Import models and utilities
+from models.generator import UNetGenerator
+from utils.mask_utils import make_random_border_mask, m11_to_01
 
-def deconv_block(in_ch, out_ch, ks=4, stride=2, pad=1, dropout=False):
-    layers = [
-        nn.ConvTranspose2d(in_ch, out_ch, ks, stride, pad, bias=False),
-        nn.BatchNorm2d(out_ch),
-        nn.ReLU(inplace=True),
-    ]
-    if dropout: layers.append(nn.Dropout(0.5))
-    return nn.Sequential(*layers)
 
-class UNetGenerator(nn.Module):
-    def __init__(self, in_ch=4, out_ch=3, ngf=64):
-        super().__init__()
-        self.e1 = nn.Sequential(nn.Conv2d(in_ch, ngf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=True))
-        self.e2 = conv_block(ngf, ngf*2)
-        self.e3 = conv_block(ngf*2, ngf*4)
-        self.e4 = conv_block(ngf*4, ngf*8)
-        self.e5 = conv_block(ngf*8, ngf*8)
-        self.e6 = conv_block(ngf*8, ngf*8)
-        self.e7 = conv_block(ngf*8, ngf*8)
-        self.e8 = nn.Sequential(nn.Conv2d(ngf*8, ngf*8, 4, 2, 1), nn.ReLU(inplace=True))
-
-        self.d1 = deconv_block(ngf*8, ngf*8, dropout=True)
-        self.d2 = deconv_block(ngf*8*2, ngf*8, dropout=True)
-        self.d3 = deconv_block(ngf*8*2, ngf*8, dropout=True)
-        self.d4 = deconv_block(ngf*8*2, ngf*8)
-        self.d5 = deconv_block(ngf*8*2, ngf*4)
-        self.d6 = deconv_block(ngf*4*2, ngf*2)
-        self.d7 = deconv_block(ngf*2*2, ngf)
-        self.out = nn.Sequential(nn.ConvTranspose2d(ngf*2, out_ch, 4, 2, 1), nn.Tanh())
-
-    def forward(self, x):
-        e1 = self.e1(x);  e2 = self.e2(e1);  e3 = self.e3(e2);  e4 = self.e4(e3)
-        e5 = self.e5(e4); e6 = self.e6(e5); e7 = self.e7(e6);  e8 = self.e8(e7)
-
-        d1 = self.d1(e8)
-        d2 = self.d2(torch.cat([d1, e7], dim=1))
-        d3 = self.d3(torch.cat([d2, e6], dim=1))
-        d4 = self.d4(torch.cat([d3, e5], dim=1))
-        d5 = self.d5(torch.cat([d4, e4], dim=1))
-        d6 = self.d6(torch.cat([d5, e3], dim=1))
-        d7 = self.d7(torch.cat([d6, e2], dim=1))
-        return self.out(torch.cat([d7, e1], dim=1))  # [-1,1]
-
-# =============== Mask makers (random & center-crop-like) ===============
-def make_random_border_mask(h, w, max_ratio=0.25):
-    import random
-    t = int(h * random.uniform(0, max_ratio))
-    b = int(h * random.uniform(0, max_ratio))
-    l = int(w * random.uniform(0, max_ratio))
-    r = int(w * random.uniform(0, max_ratio))
-    m = torch.zeros(1, h, w)
-    if t: m[:, :t, :] = 1
-    if b: m[:, h-b:, :] = 1
-    if l: m[:, :, :l] = 1
-    if r: m[:, :, w-r:] = 1
-    if m.sum() == 0:
-        border = max(1, min(h,w)//32)
-        m[:, :border, :] = 1
-    return m
-
+# =============== Additional mask maker for center-crop-like masking ===============
 def make_center_crop_border_mask(h, w, crop_h, crop_w):
     """
     Build a mask that's 1 in the OUTER border (outside the central crop),
     and 0 inside the crop. This mirrors your old "crop and pad back" logic.
+    
+    Args:
+        h: Height of the mask
+        w: Width of the mask
+        crop_h: Height of the center crop (unmasked region)
+        crop_w: Width of the center crop (unmasked region)
+    
+    Returns:
+        torch.Tensor: Binary mask of shape (1, H, W)
     """
-    top  = (h - crop_h) // 2
+    top = (h - crop_h) // 2
     left = (w - crop_w) // 2
     m = torch.ones(1, h, w)
     m[:, top:top+crop_h, left:left+crop_w] = 0
     return m
-
-# =============== Helpers ===============
-def m11_to_01(x):
-    return (x + 1) / 2
 
 def evaluate(generated_01, gt_01, mask=None):
     """

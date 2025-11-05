@@ -13,6 +13,9 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from PIL import Image
 
+from PIL import Image, ImageFile, UnidentifiedImageError
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 # ----------------------------
 # Utils: mask & transforms
 # ----------------------------
@@ -49,35 +52,66 @@ def make_random_border_mask(h, w, max_ratio=0.25):
 
 
 class ImageFolderWithMask(Dataset):
-    def __init__(self, root, image_size=256):
+    def __init__(self, root, image_size=256, max_ratio=0.25, min_bytes=5*1024):
         self.paths = []
+        self.max_ratio = max_ratio
         root = Path(root)
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        count = 0
+        print("scanning images...")
         for p in root.rglob("*"):
-            if p.suffix.lower() in exts:
+            count += 1
+            if count % 1000 == 0:
+                print(f"Scanned {count} files...")
+            if p.suffix.lower() in exts and p.is_file():
+                try:
+                    if p.stat().st_size < min_bytes:
+                        continue
+                    # 1) 結構驗證
+                    with Image.open(p) as im:
+                        im.verify()
+                    # 2) 重新開啟並實際 decode 一次（確保 load/convert 不會炸）
+                    with Image.open(p) as im:
+                        im.load()
+                except Exception:
+                    # print(f"[skip] broken image: {p}")
+                    continue
                 self.paths.append(p)
-        if len(self.paths) == 0:
-            raise FileNotFoundError(f"No images found in {root.resolve()}")
 
+        if not self.paths:
+            raise FileNotFoundError(f"No valid images found in {root.resolve()}")
+
+        random.shuffle(self.paths)
         self.to_tensor = transforms.Compose([
             transforms.Resize((image_size, image_size), interpolation=transforms.InterpolationMode.BICUBIC),
-            transforms.ToTensor(),  # [0,1]
+            transforms.ToTensor(),
         ])
 
     def __len__(self):
         return len(self.paths)
 
     def __getitem__(self, idx):
-        img = Image.open(self.paths[idx]).convert("RGB")
-        img = self.to_tensor(img)  # (3,H,W)
-        _, H, W = img.shape
+        tries = 3
+        for _ in range(tries):
+            p = self.paths[idx]
+            try:
+                # 重新開啟並解碼，避免延遲到 convert 時才炸
+                with Image.open(p) as im:
+                    im.load()
+                    img = im.convert("RGB")
+                img = self.to_tensor(img)  # (3,H,W)
+                _, H, W = img.shape
 
-        mask = make_random_border_mask(H, W, max_ratio=0.25)  # (1,H,W)
-        masked_img = img * (1 - mask)                         # zero out border
-
-        cond = torch.cat([masked_img, mask], dim=0)           # (4,H,W)
-        target = img                                          # (3,H,W)
-        return cond, target, mask
+                mask = make_random_border_mask(H, W, max_ratio=self.max_ratio)  # (1,H,W)
+                masked = img * (1 - mask)
+                cond = torch.cat([masked, mask], dim=0)
+                target = img
+                return cond, target, mask
+            except (OSError, UnidentifiedImageError, ValueError):
+                # 這張壞就換下一張（循環）
+                idx = (idx + 1) % len(self.paths)
+                continue
+        raise RuntimeError(f"Too many failures reading images; last tried: {p}")
 
 # ----------------------------
 # Models: UNet & PatchGAN

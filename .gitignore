@@ -1,8 +1,10 @@
 # Ignore all files in data directory
 data/**
 results_comparison/**
+results_video/**
 checkpoints/**
 outputs/**
+checkpoint_test
 
 # But keep these directories (via .gitkeep files)
 !data/
@@ -16,6 +18,12 @@ outputs/**
 # Keep these empty directories
 !results_comparison/
 !results_comparison/.gitkeep
+!results_video/
+!results_video/.gitkeep
+!results_video/orig_frames/
+!results_video/orig_frames/.gitkeep
+!results_video/pred_frames/
+!results_video/pred_frames/.gitkeep
 !checkpoints/
 !checkpoints/.gitkeep
 !outputs/
@@ -27,3 +35,4 @@ __pycache__/
 *$py.class
 .DS_Store
 *.png
+*.mp4

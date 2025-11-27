@@ -54,6 +54,8 @@ You can change some parameter's value.
 
 `--out_dir`（default: outputs）：Directory where visualized training outputs (sample images) are saved for each epoch. The actual model checkpoints (G_epoch_xxx.pt, D_epoch_xxx.pt) are saved inside a separate checkpoints/ folder.
 
+`--checkpoint` (default: checkpoints) : Directory where saves checkpoints.
+
 `--epochs`（default: 20）：Number of training epochs (how many full passes over the dataset).
 
 `--batch_size`（default: 8）：Number of images per training batch. If your GPU memory is limited, reduce this value.
@@ -69,27 +71,45 @@ You can change some parameter's value.
 Training progress will be displayed, and sample outputs will be saved in the `outputs` directory. Model checkpoints are saved in the `checkpoints` directory.
 
 ### Testing
+#### output_picture
+
 ```bash
-python test.py --test_dir data/test --output_dir results_comparison --mask_mode center
+python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size True
 ```
 
-You can change some parameter's value.
+You can change some parameter's value.   
 `--test_dir` (default: data/test)：Folder containing test images.
 
-`--output_dir` (default: results_compparison)：Where the side-by-side grids are saved, [masked input | mask | generated | ground truth].
+`--output_dir` (default: results_compparison)：Where the output would be saved.
 
 `--image_size` (default: 256)：Images are resized to (image_size, image_size) before inference.
 
 `--checkpoint` (default: checkpoints/G_epoch_010.pt; If missing, the newest in checkpoints/ is used)：Generator checkpoint path to load.
 
-`--mask_mode` (choices: center, random; default: center)：
-- center: preserve a central crop and outpaint the border.
-- random: random border widths on all four sides (matches training’s random-border style).
+`--extend` (default : 64) : The size of padding to extend lets the result image become (image_size + extend, image_size + extend)
 
-`--center_full_w`, `--center_full_h` (defaults: 448, 256)：Reference full size used only to compute crop ratios for center mode (so your old 448→400 and 256→224 proportions scale to any image_size).
+`--restore_size` (default : False) : A flag that if you wrote `--restore_size`, final results are restored to original image ratio, else, it will be (image_size + extend, image_size + extend)
 
-`--center_crop_w`, `--center_crop_h` (defaults: 400, 224)：Reference crop size used with the above to define the central preserved area in center mode.
+#### output video
 
+```bash
+python test_video.py --input test_video.mp4 --output_dir results_video --image_size 256 --extend 64 --frames_count 1 --restore_size
+```
+
+You can change some parameter's value.   
+`--input` (it is required)：The input video name
+
+`--output_dir` (default: results_video)：Where the output video, original video frames and predicted video frames would be saved.
+
+`--image_size` (default: 256)：Images are resized to (image_size, image_size) before inference.
+
+`--checkpoint` (default: checkpoints/G_epoch_010.pt; If missing, the newest in checkpoints/ is used)：Generator checkpoint path to load.
+
+`--extend` (default : 64) : The size of padding to extend lets the result image become (image_size + extend, image_size + extend)
+
+`--frames_count` (default : 1) : Determines how many fps to take.
+
+`--restore_size` (default : False) : A flag that if you wrote `--restore_size`, final results are restored to original image ratio, else, it will be (image_size + extend, image_size + extend)
 
 ## Project Structure
 
@@ -108,6 +128,8 @@ You can change some parameter's value.
 - numpy
 - matplotlib
 - pytorch_msssim
+- opencv-python
+- moviepy
 
 ## Examples
 

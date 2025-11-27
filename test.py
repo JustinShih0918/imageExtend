@@ -1,112 +1,159 @@
+# test.py
 import os
+import argparse
+from pathlib import Path
+
 import torch
-from torchvision.utils import save_image
-from torchvision import transforms as T
-from PIL import Image
-from models.generator import UNetGenerator
 import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.utils import save_image
+from PIL import Image
 
-# Optional: install pytorch-msssim if not yet
 # pip install pytorch-msssim
-from pytorch_msssim import ssim
+from pytorch_msssim import ssim as ssim_fn
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+# Import models and utilities
+from models.generator import UNetGenerator
+from utils.mask_utils import make_random_border_mask, m11_to_01
 
-# --- Load trained generator ---
-G = UNetGenerator(in_channels=3, out_channels=3).to(device)
-G.load_state_dict(torch.load("checkpoints/G_epoch_10.pth", map_location=device))
-G.eval()
 
-# --- Paths ---
-test_dir = "data/test"        # folder with original full images
-output_dir = "results_comparison"    # where outputs will be saved
-os.makedirs(output_dir, exist_ok=True)
-
-# --- Image transform ---
-size_full = (448, 256)
-size_crop = (400, 224)
-
-transform = T.Compose([
-    T.Resize(size_full),
-    T.ToTensor()
-])
-
-# --- Function to generate input (simulate cropped / missing border) ---
-def create_input(img_tensor, crop_size=size_crop):
-    _, H, W = img_tensor.shape
-    crop_h, crop_w = crop_size
-    top = (H - crop_h) // 2
-    left = (W - crop_w) // 2
-
-    # crop and pad back to full size
-    cropped = img_tensor[:, top:top + crop_h, left:left + crop_w]
-    padded = torch.zeros_like(img_tensor)
-    padded[:, top:top + crop_h, left:left + crop_w] = cropped
-    return padded
-
-# --- Evaluation function ---
-def evaluate(generated, ground_truth, mask=None):
+# =============== Additional mask maker for center-crop-like masking ===============
+def make_center_crop_border_mask(h, w, crop_h, crop_w):
     """
-    generated, ground_truth: [B, C, H, W] normalized [0,1]
-    mask: optional binary mask for evaluating only extended region
+    Build a mask that's 1 in the OUTER border (outside the central crop),
+    and 0 inside the crop. This mirrors your old "crop and pad back" logic.
+    
+    Args:
+        h: Height of the mask
+        w: Width of the mask
+        crop_h: Height of the center crop (unmasked region)
+        crop_w: Width of the center crop (unmasked region)
+    
+    Returns:
+        torch.Tensor: Binary mask of shape (1, H, W)
+    """
+    top = (h - crop_h) // 2
+    left = (w - crop_w) // 2
+    m = torch.ones(1, h, w)
+    m[:, top:top+crop_h, left:left+crop_w] = 0
+    return m
+
+def evaluate(generated_01, gt_01, mask=None):
+    """
+    Both tensors in [0,1]. If mask provided (1 in border region),
+    metrics are computed ONLY on masked region.
     """
     if mask is not None:
-        generated = generated * mask
-        ground_truth = ground_truth * mask
+        # Avoid empty division if mask accidentally zero
+        if mask.sum() < 1:
+            mask = None
 
-    l1 = F.l1_loss(generated, ground_truth).item()
-    mse = F.mse_loss(generated, ground_truth)
-    psnr_val = 10 * torch.log10(1 / mse).item()
-    ssim_val = ssim(generated, ground_truth, data_range=1.0).item()
+    if mask is not None:
+        generated_01 = generated_01 * mask
+        gt_01 = gt_01 * mask
 
+    l1 = F.l1_loss(generated_01, gt_01).item()
+    mse = F.mse_loss(generated_01, gt_01)
+    psnr_val = 10 * torch.log10(torch.tensor(1.0, device=mse.device) / (mse + 1e-12)).item()
+    ssim_val = ssim_fn(generated_01, gt_01, data_range=1.0).item()
     return l1, psnr_val, ssim_val
 
-# --- Run testing ---
-total_l1, total_psnr, total_ssim = 0, 0, 0
-count = 0
+# =============== Main Test ===============
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--test_dir", type=str, default="data/test")
+    ap.add_argument("--output_dir", type=str, default="results_comparison")
+    ap.add_argument("--image_size", type=int, default=256)
+    ap.add_argument("--checkpoint", type=str, default="checkpoints/G_epoch_010.pt")
+    ap.add_argument("--mask_mode", type=str, choices=["center", "random"], default="center")
+    ap.add_argument("--center_full_w", type=int, default=448)  # for compatibility with your old numbers
+    ap.add_argument("--center_full_h", type=int, default=256)
+    ap.add_argument("--center_crop_w", type=int, default=400)
+    ap.add_argument("--center_crop_h", type=int, default=224)
+    args = ap.parse_args()
 
-for filename in os.listdir(test_dir):
-    if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
-        continue
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    img_path = os.path.join(test_dir, filename)
-    img = Image.open(img_path).convert("RGB")
-    img_tensor = transform(img)
+    # Model
+    G = UNetGenerator(in_ch=4, out_ch=3, ngf=64).to(device)
+    # Be generous: allow both .pt and .pth checkpoints
+    ckpt_path = args.checkpoint
+    if not os.path.isfile(ckpt_path):
+        # try a few fallbacks
+        cand = sorted(Path("checkpoints").glob("G_epoch_*.*"))
+        if not cand:
+            raise FileNotFoundError("No generator checkpoint found in --checkpoint or ./checkpoints/")
+        ckpt_path = str(cand[-1])
+    state = torch.load(ckpt_path, map_location=device)
+    G.load_state_dict(state)
+    G.eval()
 
-    # create input for generator (simulate cropped input)
-    input_tensor = create_input(img_tensor)
+    to_tensor = transforms.Compose([
+        transforms.Resize((args.image_size, args.image_size), interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.ToTensor()
+    ])
 
-    # add batch dimension
-    input_tensor = input_tensor.unsqueeze(0).to(device)
-    img_tensor = img_tensor.unsqueeze(0).to(device)
+    total_full = {"l1":0.0, "psnr":0.0, "ssim":0.0}
+    total_mask = {"l1":0.0, "psnr":0.0, "ssim":0.0}
+    count = 0
 
-    # generate output
-    with torch.no_grad():
-        output_tensor = G(input_tensor)
+    for fname in os.listdir(args.test_dir):
+        if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".webp")):
+            continue
+        path = os.path.join(args.test_dir, fname)
+        img = Image.open(path).convert("RGB")
+        img_t = to_tensor(img).unsqueeze(0).to(device)   # (1,3,H,W) in [0,1]
+        _, _, H, W = img_t.shape
 
-    # save comparison: [input | generated | ground truth]
-    combined = torch.cat([input_tensor, output_tensor, img_tensor], dim=0)
-    save_path = os.path.join(output_dir, filename)
-    save_image(combined, save_path, nrow=3, normalize=True)
-    print(f"Saved comparison: {save_path}")
+        if args.mask_mode == "center":
+            # emulate your old center-crop numbers, scaled to current resolution
+            # We compute a crop ratio from the old sizes and apply to current size.
+            crop_ratio_h = args.center_crop_h / max(1, args.center_full_h)
+            crop_ratio_w = args.center_crop_w / max(1, args.center_full_w)
+            crop_h = max(1, int(round(H * crop_ratio_h)))
+            crop_w = max(1, int(round(W * crop_ratio_w)))
+            mask = make_center_crop_border_mask(H, W, crop_h, crop_w).unsqueeze(0).to(device)  # (1,1,H,W)
+        else:
+            mask = make_random_border_mask(H, W, max_ratio=0.25).unsqueeze(0).to(device)       # (1,1,H,W)
 
-    # --- Compute metrics ---
-    # optionally, mask only the extended border region
-    # mask = torch.zeros_like(img_tensor)
-    # mask[:, :, top:top+crop_h, left: left+crop_w] = 0
-    # mask[:, :, :, :] = 1 - mask  # evaluate only outside input
-    # For simplicity, here we evaluate full image
-    l1_val, psnr_val, ssim_val = evaluate(output_tensor, img_tensor)
-    print(f"L1: {l1_val:.4f}, PSNR: {psnr_val:.2f} dB, SSIM: {ssim_val:.4f}")
+        # Condition: concatenate masked image + mask
+        masked = img_t * (1 - mask)                     # (1,3,H,W)
+        cond   = torch.cat([masked, mask], dim=1)       # (1,4,H,W)
 
-    total_l1 += l1_val
-    total_psnr += psnr_val
-    total_ssim += ssim_val
-    count += 1
+        with torch.no_grad():
+            pred_m11 = G(cond)                          # [-1,1]
+        pred_01 = m11_to_01(pred_m11).clamp(0,1)
 
-# --- Print average metrics ---
-if count > 0:
-    print("\n--- Average Metrics ---")
-    print(f"L1: {total_l1/count:.4f}")
-    print(f"PSNR: {total_psnr/count:.2f} dB")
-    print(f"SSIM: {total_ssim/count:.4f}")
+        # Compose only masked part from prediction to show realistic completion
+        final = pred_01 * mask + img_t * (1 - mask)
+
+        # Save grid: [input | mask | output | gt]
+        vis = torch.cat([masked, mask.repeat(1,3,1,1), final, img_t], dim=0)
+        save_image(vis, os.path.join(args.output_dir, fname), nrow=1, normalize=False)
+        print(f"Saved comparison: {os.path.join(args.output_dir, fname)}")
+
+        # Metrics: full image and masked region only
+        l1_full, psnr_full, ssim_full = evaluate(final, img_t, mask=None)
+        l1_mask, psnr_mask, ssim_mask = evaluate(final, img_t, mask=mask)
+
+        print(f"[Full ] L1: {l1_full:.4f}, PSNR: {psnr_full:.2f} dB, SSIM: {ssim_full:.4f}")
+        print(f"[Mask ] L1: {l1_mask:.4f}, PSNR: {psnr_mask:.2f} dB, SSIM: {ssim_mask:.4f}")
+
+        total_full["l1"]  += l1_full
+        total_full["psnr"]+= psnr_full
+        total_full["ssim"]+= ssim_full
+
+        total_mask["l1"]  += l1_mask
+        total_mask["psnr"]+= psnr_mask
+        total_mask["ssim"]+= ssim_mask
+
+        count += 1
+
+    if count > 0:
+        print("\n--- Average Metrics ---")
+        print(f"[Full ] L1: {total_full['l1']/count:.4f}, PSNR: {total_full['psnr']/count:.2f} dB, SSIM: {total_full['ssim']/count:.4f}")
+        print(f"[Mask ] L1: {total_mask['l1']/count:.4f}, PSNR: {total_mask['psnr']/count:.2f} dB, SSIM: {total_mask['ssim']/count:.4f}")
+
+if __name__ == "__main__":
+    main()

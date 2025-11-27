@@ -1,79 +1,136 @@
-import torch
+# train.py
 import os
-from torchvision.utils import save_image
+import argparse
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F #new with losses
 from torch.utils.data import DataLoader
-from datasets.image_dataset import ImageExtendDataset
+from torchvision.utils import save_image
+
+# Import models
 from models.generator import UNetGenerator
 from models.discriminator import PatchDiscriminator
-import torch.nn.functional as F
-import torch.optim as optim
+
+# Import dataset
+from datasets.inpainting_dataset import ImageFolderWithMask
+
+# Import utilities
+from utils.mask_utils import denorm01_to_m11, m11_to_01
+
+# Import perceptual loss (new with losses)
+from utils.losses import VGGPerceptualLoss
+
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data_dir", type=str, default="data/train")
+    ap.add_argument("--out_dir", type=str, default="outputs")
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--batch_size", type=int, default=8)
+    ap.add_argument("--image_size", type=int, default=256)
+    ap.add_argument("--lr", type=float, default=2e-4)
+    ap.add_argument("--lambda_gan", type=float, default=1.0)
+    ap.add_argument("--lambda_l1", type=float, default=100.0)
+    ap.add_argument("--lambda_perceptual", type=float, default=10.0) # New argument for perceptual loss weight
+    args = ap.parse_args()
 
-    # --- Data ---
-    dataset = ImageExtendDataset("data/train")
-    loader = DataLoader(dataset, batch_size=16, shuffle=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    os.makedirs(args.out_dir, exist_ok=True)
+    os.makedirs("checkpoints", exist_ok=True)
 
-    if len(dataset) == 0:
-        print("No training images found in data/train/")
-        return
+    ds = ImageFolderWithMask(args.data_dir, image_size=args.image_size)
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
-    # --- Models ---
-    G = UNetGenerator().to(device)
-    D = PatchDiscriminator().to(device)
+    G = UNetGenerator(in_ch=4, out_ch=3, ngf=64).to(device)
+    D = PatchDiscriminator(in_ch=7, ndf=64).to(device)
 
-    opt_G = optim.Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    opt_D = optim.Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
+    optG = torch.optim.Adam(G.parameters(), lr=args.lr, betas=(0.5, 0.999))
+    optD = torch.optim.Adam(D.parameters(), lr=args.lr, betas=(0.5, 0.999))
+    
+    # bce = nn.BCEWithLogitsLoss()
+    # l1 = nn.L1Loss(reduction="none")
+    
+    # New loss functions with perceptual loss
+    l1 = nn.L1Loss(reduction="none")
+    perceptual_loss = VGGPerceptualLoss().to(device)
 
-    print(f"Training started on {device} with {len(dataset)} images")
+    print(f"Training on {device} with {len(ds)} images")
 
-    # --- Training ---
-    for epoch in range(10):
-        for i, batch in enumerate(loader):
-            x, y = [b.to(device) for b in batch]
-            fake_y = G(x)
+    for epoch in range(1, args.epochs + 1):
+        G.train(); D.train()
+        for i, (cond, target_01, mask) in enumerate(dl):
+            cond = cond.to(device)                 # (N,4,H,W)
+            target_01 = target_01.to(device)       # (N,3,H,W)
+            mask = mask.to(device)                 # (N,1,H,W)
+            target = denorm01_to_m11(target_01)    # [-1,1]
 
-            # Train D
-            D_real = D(x, y)
-            D_fake = D(x, fake_y.detach())
-            loss_D = 0.5 * (F.mse_loss(D_real, torch.ones_like(D_real)) +
-                            F.mse_loss(D_fake, torch.zeros_like(D_fake)))
-            opt_D.zero_grad()
-            loss_D.backward()
-            opt_D.step()
+            # --- Train D ---
+            with torch.no_grad():
+                fake = G(cond)
+            logits_real = D(cond, target)
+            logits_fake = D(cond, fake.detach())
+            # valid = torch.ones_like(logits_real)
+            # fake_lbl = torch.zeros_like(logits_fake)
+            # d_loss = 0.5 * (bce(logits_real, valid) + bce(logits_fake, fake_lbl))
+            # New hinge loss for D
+            d_loss_real = torch.mean(F.relu(1.0 - logits_real))
+            d_loss_fake = torch.mean(F.relu(1.0 + logits_fake))
+            d_loss = 0.5 * (d_loss_real + d_loss_fake)
+            optD.zero_grad(set_to_none=True)
+            d_loss.backward()
+            optD.step()
 
-            # Train G
-            D_fake = D(x, fake_y)
-            loss_G_GAN = F.mse_loss(D_fake, torch.ones_like(D_fake))
-            loss_G_L1 = F.l1_loss(fake_y, y) * 100
-            loss_G = loss_G_GAN + loss_G_L1
-            opt_G.zero_grad()
-            loss_G.backward()
-            opt_G.step()
+            # --- Train G ---
+            fake = G(cond)
+            logits_fake = D(cond, fake)
+            # g_adv = bce(logits_fake, valid)
+            
+            # New hinge loss for G
+            g_adv = -torch.mean(logits_fake)
+
+            # masked L1 only on the border region (mask==1)
+            l1_map = l1(fake, target)                 # (N,3,H,W), in [-1,1] space
+            l1_masked = (l1_map * mask).sum() / (mask.sum() * 3 + 1e-6)
+
+            # New perceptual loss
+            p_loss = perceptual_loss(fake, target)
+            g_loss = (args.lambda_gan * g_adv) + \
+                     (args.lambda_l1 * l1_masked) + \
+                     (args.lambda_perceptual * p_loss)
+            optG.zero_grad(set_to_none=True)
+            g_loss.backward()
+            optG.step()
 
             if i % 10 == 0:
-                print(f"Epoch[{epoch+1}] Batch[{i}] | L_D={loss_D.item():.3f} | L_G={loss_G.item():.3f}")
+                print(f"Epoch[{epoch}/{args.epochs}] Batch[{i}] "
+                      f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} | L1_mask={l1_masked.item():.3f}")
+        
+        G.eval()
+        with torch.no_grad():
+            # [MODIFIED] Robust iterator handling and mask visualization
+            try:
+                cond_v, target_v, mask_v = next(iter(dl))
+            except StopIteration:
+                # Restart iterator if needed
+                cond_v, target_v, mask_v = next(iter(DataLoader(ds, batch_size=args.batch_size)))
+
+            cond_v = cond_v.to(device); target_v = target_v.to(device)
+            out_v = G(cond_v)
             
-            # --- save sample images every few epochs ---
-            if (epoch + 1) % 5 == 0:
-                os.makedirs("outputs", exist_ok=True)
-                sample_fake = fake_y[:4]  # first few samples
-                sample_real = y[:4]
-                sample_in = x[:4]
+            vis = torch.cat([
+                cond_v[:, :3],                         # masked RGB
+                cond_v[:, 3:].repeat(1,3,1,1),         # mask as 3ch (Visualizing the hole)
+                m11_to_01(out_v).clamp(0,1),           # prediction
+                target_v                               # ground truth
+            ], dim=0)
+            
+            save_image(vis, os.path.join(args.out_dir, f"epoch_{epoch:03d}.png"),
+                       nrow=cond_v.shape[0], padding=2)
 
-                # Combine input, output, target side by side
-                save_image(
-                    torch.cat([sample_in, sample_fake, sample_real], dim=0),
-                    f"outputs/epoch_{epoch+1:03d}.png",
-                    nrow=4,
-                    normalize=True
-                )
-
-            # --- save model checkpoints ---
-            if (epoch + 1) % 10 == 0:
-                torch.save(G.state_dict(), f"checkpoints/G_epoch_{epoch+1}.pth")
-                torch.save(D.state_dict(), f"checkpoints/D_epoch_{epoch+1}.pth")
+        # Save checkpoints each epoch
+        torch.save(G.state_dict(), os.path.join("checkpoints", f"G_epoch_{epoch:03d}.pt"))
+        torch.save(D.state_dict(), os.path.join("checkpoints", f"D_epoch_{epoch:03d}.pt"))
 
 if __name__ == "__main__":
     main()

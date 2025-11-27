@@ -1,4 +1,3 @@
-# test.py
 import os
 import argparse
 from pathlib import Path
@@ -9,151 +8,181 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from PIL import Image
 
-# pip install pytorch-msssim
-from pytorch_msssim import ssim as ssim_fn
-
-# Import models and utilities
 from models.generator import UNetGenerator
-from utils.mask_utils import make_random_border_mask, m11_to_01
+from utils.mask_utils import m11_to_01
 
 
-# =============== Additional mask maker for center-crop-like masking ===============
-def make_center_crop_border_mask(h, w, crop_h, crop_w):
+def snap_up(x: int, mult: int) -> int:
+    """Round x up to nearest multiple of mult."""
+    return (x + mult - 1) // mult * mult
+
+
+def safe_load_state(model, ckpt_path, device):
+    """Load checkpoint safely; supports weights_only on newer PyTorch; tolerant to wrappers."""
+    if not os.path.isfile(ckpt_path):
+        cand = sorted(Path("checkpoints").glob("G_epoch_*.*"))
+        if not cand:
+            raise FileNotFoundError("No generator checkpoint found in --checkpoint or ./checkpoints/")
+        ckpt_path = str(cand[-1])
+
+    try:
+        state = torch.load(ckpt_path, map_location=device, weights_only=True)
+    except TypeError:
+        state = torch.load(ckpt_path, map_location=device)
+
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing or unexpected:
+        print("[Warn] load_state_dict mismatches -> missing:", missing, " unexpected:", unexpected)
+
+
+def build_center_canvas_and_mask(img_S, S, Hc, Wc, device):
     """
-    Build a mask that's 1 in the OUTER border (outside the central crop),
-    and 0 inside the crop. This mirrors your old "crop and pad back" logic.
-    
-    Args:
-        h: Height of the mask
-        w: Width of the mask
-        crop_h: Height of the center crop (unmasked region)
-        crop_w: Width of the center crop (unmasked region)
-    
-    Returns:
-        torch.Tensor: Binary mask of shape (1, H, W)
+    Create (Hc,Wc) canvas with the SxS image CENTERED.
+    Mask=1 on extended border, 0 on the centered SxS region.
     """
-    top = (h - crop_h) // 2
-    left = (w - crop_w) // 2
-    m = torch.ones(1, h, w)
-    m[:, top:top+crop_h, left:left+crop_w] = 0
-    return m
+    # center coordinates
+    top  = (Hc - S) // 2
+    left = (Wc - S) // 2
+    bot  = top + S
+    right= left + S
 
-def evaluate(generated_01, gt_01, mask=None):
+    canvas = torch.zeros(1, 3, Hc, Wc, device=device)
+    canvas[:, :, top:bot, left:right] = img_S  # center place
+
+    mask = torch.ones(1, 1, Hc, Wc, device=device)
+    mask[:, :, top:bot, left:right] = 0        # inner (original) region is kept
+    return canvas, mask
+
+
+def forward_with_auto_snap(G, canvas, mask, multiples=(64, 128, 256, 512), pad_mode_canvas="reflect"):
     """
-    Both tensors in [0,1]. If mask provided (1 in border region),
-    metrics are computed ONLY on masked region.
+    Temporarily pad (right/bottom) up to multiples for UNet, then crop back to (Hc,Wc).
+    No resizing is performed; output size == target size.
+    pad_mode_canvas: 'reflect' or 'constant' for canvas padding aesthetics.
     """
-    if mask is not None:
-        # Avoid empty division if mask accidentally zero
-        if mask.sum() < 1:
-            mask = None
+    _, _, Hc, Wc = canvas.shape
+    device = canvas.device
 
-    if mask is not None:
-        generated_01 = generated_01 * mask
-        gt_01 = gt_01 * mask
+    for mult in multiples:
+        Hs = snap_up(Hc, mult)
+        Ws = snap_up(Wc, mult)
 
-    l1 = F.l1_loss(generated_01, gt_01).item()
-    mse = F.mse_loss(generated_01, gt_01)
-    psnr_val = 10 * torch.log10(torch.tensor(1.0, device=mse.device) / (mse + 1e-12)).item()
-    ssim_val = ssim_fn(generated_01, gt_01, data_range=1.0).item()
-    return l1, psnr_val, ssim_val
+        pad_right  = Ws - Wc
+        pad_bottom = Hs - Hc
 
-# =============== Main Test ===============
+        try:
+            # Pad canvas（通常用 reflect/replicate 讓邊界更自然）
+            if pad_mode_canvas in ("reflect", "replicate"):
+                canvas_big = F.pad(canvas, (0, pad_right, 0, pad_bottom), mode=pad_mode_canvas)
+            else:
+                canvas_big = F.pad(canvas, (0, pad_right, 0, pad_bottom), mode="constant", value=0)
+
+            # Mask 外延的部位一律視為 1（需要生成）
+            mask_big = F.pad(mask, (0, pad_right, 0, pad_bottom), mode="constant", value=1)
+
+            cond = torch.cat([canvas_big * (1 - mask_big), mask_big], dim=1)  # (1,4,Hs,Ws)
+
+            with torch.no_grad():
+                pred_big_m11 = G(cond)  # (1,3,Hs,Ws)
+            pred_big = m11_to_01(pred_big_m11).clamp(0, 1)
+
+            final_big = pred_big * mask_big + canvas_big * (1 - mask_big)
+            final = final_big[:, :, :Hc, :Wc]  # crop back to target size (no resize)
+            print(f"[Outpaint] snapped multiple={mult} -> model_in=({Hs},{Ws}), crop_back=({Hc},{Wc})")
+            return final
+        except RuntimeError as e:
+            if "Sizes of tensors must match" in str(e):
+                print(f"[Retry] multiple={mult} failed due to size mismatch, trying bigger multiple...")
+                continue
+            raise
+    raise RuntimeError(f"All multiples failed for target {Hc}x{Wc}.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--test_dir", type=str, default="data/test")
     ap.add_argument("--output_dir", type=str, default="results_comparison")
-    ap.add_argument("--image_size", type=int, default=256)
+    ap.add_argument("--image_size", type=int, default=192, help="base S; the original gets resized to SxS before extension")
     ap.add_argument("--checkpoint", type=str, default="checkpoints/G_epoch_010.pt")
-    ap.add_argument("--mask_mode", type=str, choices=["center", "random"], default="center")
-    ap.add_argument("--center_full_w", type=int, default=448)  # for compatibility with your old numbers
-    ap.add_argument("--center_full_h", type=int, default=256)
-    ap.add_argument("--center_crop_w", type=int, default=400)
-    ap.add_argument("--center_crop_h", type=int, default=224)
+
+    # Choose one: --extend n  (四周各延伸 n)；或分別用 --pad_h / --pad_w（上下/左右合計延伸量）
+    ap.add_argument("--extend", type=int, default=64, help="extend n on both height and width (final=(S+n)x(S+n))")
+    # ap.add_argument("--pad_h", type=int, default=0, help="total vertical extension (final height = S + pad_h)")
+    # ap.add_argument("--pad_w", type=int, default=0, help="total horizontal extension (final width  = S + pad_w)")
+    ap.add_argument("--restore_size", action="store_true", help="restore to original aspect ratio size after outpainting")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # derive pads
+    pad_h = args.extend
+    pad_w = args.extend
+
+    if pad_h < 0 or pad_w < 0:
+        raise ValueError("pad_h and pad_w must be non-negative")
+    
+    S = int(args.image_size)
+    if S <= 0:
+        raise ValueError("--image_size must be > 0")
+
+    Hc = S + pad_h
+    Wc = S + pad_w
+    if Hc == S and Wc == S:
+        raise ValueError("No extension set. Use --extend n or --pad_h/--pad_w.")
+
     # Model
     G = UNetGenerator(in_ch=4, out_ch=3, ngf=64).to(device)
-    # Be generous: allow both .pt and .pth checkpoints
-    ckpt_path = args.checkpoint
-    if not os.path.isfile(ckpt_path):
-        # try a few fallbacks
-        cand = sorted(Path("checkpoints").glob("G_epoch_*.*"))
-        if not cand:
-            raise FileNotFoundError("No generator checkpoint found in --checkpoint or ./checkpoints/")
-        ckpt_path = str(cand[-1])
-    state = torch.load(ckpt_path, map_location=device)
-    G.load_state_dict(state)
+    safe_load_state(G, args.checkpoint, device)
     G.eval()
 
-    to_tensor = transforms.Compose([
-        transforms.Resize((args.image_size, args.image_size), interpolation=transforms.InterpolationMode.BICUBIC),
+    # transforms: resize original to SxS
+    to_S = transforms.Compose([
+        transforms.Resize((S, S), interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.ToTensor()
     ])
-
-    total_full = {"l1":0.0, "psnr":0.0, "ssim":0.0}
-    total_mask = {"l1":0.0, "psnr":0.0, "ssim":0.0}
-    count = 0
 
     for fname in os.listdir(args.test_dir):
         if not fname.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".webp")):
             continue
         path = os.path.join(args.test_dir, fname)
         img = Image.open(path).convert("RGB")
-        img_t = to_tensor(img).unsqueeze(0).to(device)   # (1,3,H,W) in [0,1]
-        _, _, H, W = img_t.shape
+        base = Path(fname).stem
 
-        if args.mask_mode == "center":
-            # emulate your old center-crop numbers, scaled to current resolution
-            # We compute a crop ratio from the old sizes and apply to current size.
-            crop_ratio_h = args.center_crop_h / max(1, args.center_full_h)
-            crop_ratio_w = args.center_crop_w / max(1, args.center_full_w)
-            crop_h = max(1, int(round(H * crop_ratio_h)))
-            crop_w = max(1, int(round(W * crop_ratio_w)))
-            mask = make_center_crop_border_mask(H, W, crop_h, crop_w).unsqueeze(0).to(device)  # (1,1,H,W)
+        scale_h = img.height / S
+        scale_w = img.width  / S
+        out_h = int(round((S + pad_h) * scale_h))
+        out_w = int(round((S + pad_w) * scale_w))
+
+        # 1) 原圖縮到 SxS
+        img_S = to_S(img).unsqueeze(0).to(device)  # (1,3,S,S)
+
+        # 2) 建立 (S+pad_h, S+pad_w) 畫布，原圖「置中」，外框=mask=1
+        canvas, mask = build_center_canvas_and_mask(img_S, S, Hc, Wc, device)
+
+        # 3) 模型推論：臨時 pad 到 64/128/256/512 倍數，再裁回 (Hc,Wc)
+        final = forward_with_auto_snap(G, canvas, mask, multiples=(64, 128, 256, 512), pad_mode_canvas="reflect")
+        #resize to original aspect ratio if needed
+        
+        if args.restore_size:
+            resized_final = F.interpolate(
+                final, size=(out_h, out_w),
+                mode='bicubic', align_corners=False, antialias=True
+            )
         else:
-            mask = make_random_border_mask(H, W, max_ratio=0.25).unsqueeze(0).to(device)       # (1,1,H,W)
+            resized_final = final
+        # 4) 輸出（最終尺寸就是 (S+pad_h) x (S+pad_w)）
+        out_img = os.path.join(args.output_dir, f"{base}_outpaint_center_{Hc}x{Wc}.png")
+        # grid_img = os.path.join(args.output_dir, f"{base}_grid_{Hc}x{Wc}.png")
 
-        # Condition: concatenate masked image + mask
-        masked = img_t * (1 - mask)                     # (1,3,H,W)
-        cond   = torch.cat([masked, mask], dim=1)       # (1,4,H,W)
-
-        with torch.no_grad():
-            pred_m11 = G(cond)                          # [-1,1]
-        pred_01 = m11_to_01(pred_m11).clamp(0,1)
-
-        # Compose only masked part from prediction to show realistic completion
-        final = pred_01 * mask + img_t * (1 - mask)
-
-        # Save grid: [input | mask | output | gt]
-        vis = torch.cat([masked, mask.repeat(1,3,1,1), final, img_t], dim=0)
-        save_image(vis, os.path.join(args.output_dir, fname), nrow=1, normalize=False)
-        print(f"Saved comparison: {os.path.join(args.output_dir, fname)}")
-
-        # Metrics: full image and masked region only
-        l1_full, psnr_full, ssim_full = evaluate(final, img_t, mask=None)
-        l1_mask, psnr_mask, ssim_mask = evaluate(final, img_t, mask=mask)
-
-        print(f"[Full ] L1: {l1_full:.4f}, PSNR: {psnr_full:.2f} dB, SSIM: {ssim_full:.4f}")
-        print(f"[Mask ] L1: {l1_mask:.4f}, PSNR: {psnr_mask:.2f} dB, SSIM: {ssim_mask:.4f}")
-
-        total_full["l1"]  += l1_full
-        total_full["psnr"]+= psnr_full
-        total_full["ssim"]+= ssim_full
-
-        total_mask["l1"]  += l1_mask
-        total_mask["psnr"]+= psnr_mask
-        total_mask["ssim"]+= ssim_mask
-
-        count += 1
-
-    if count > 0:
-        print("\n--- Average Metrics ---")
-        print(f"[Full ] L1: {total_full['l1']/count:.4f}, PSNR: {total_full['psnr']/count:.2f} dB, SSIM: {total_full['ssim']/count:.4f}")
-        print(f"[Mask ] L1: {total_mask['l1']/count:.4f}, PSNR: {total_mask['psnr']/count:.2f} dB, SSIM: {total_mask['ssim']/count:.4f}")
+        # masked_vis = canvas * (1 - mask)
+        # vis = torch.cat([masked_vis, mask.repeat(1, 3, 1, 1), final, canvas], dim=0)
+        save_image(resized_final, out_img)
+        # save_image(vis, grid_img, nrow=1, normalize=False)
+        print(f"Saved: {out_img}")
 
 if __name__ == "__main__":
     main()

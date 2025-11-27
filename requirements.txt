@@ -4,3 +4,5 @@ Pillow
 numpy
 matplotlib
 pytorch_msssim
+opencv-python
+moviepy

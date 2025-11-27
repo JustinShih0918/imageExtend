@@ -8,7 +8,7 @@ from torch.nn.utils import spectral_norm
 def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=False, leaky=True):
 
     layers = [spectral_norm(nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=True))]
-    layers.append(nn.LeakyReLU(0.2, inplace=True))
+    layers.append(nn.LeakyReLU(0.2, inplace=False))
     return nn.Sequential(*layers)
 
 
@@ -27,7 +27,7 @@ class PatchDiscriminator(nn.Module):
     """
     def __init__(self, in_ch=7, ndf=64):
         super().__init__()
-        self.c1 = nn.Sequential(nn.Conv2d(in_ch, ndf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=True))
+        self.c1 = nn.Sequential(nn.Conv2d(in_ch, ndf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=False))
         self.c2 = conv_block(ndf, ndf*2)
         self.c3 = conv_block(ndf*2, ndf*4)
         self.c4 = conv_block(ndf*4, ndf*8, stride=1)  # keep receptive field

@@ -8,7 +8,7 @@ def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=True, leaky=True):
     layers = [nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=not norm)]
     if norm:
         layers.append(nn.BatchNorm2d(out_ch))
-    layers.append(nn.LeakyReLU(0.2, inplace=True) if leaky else nn.ReLU(inplace=True))
+    layers.append(nn.LeakyReLU(0.2, inplace=False) if leaky else nn.ReLU(inplace=False))
     return nn.Sequential(*layers)
 
 
@@ -17,7 +17,7 @@ def deconv_block(in_ch, out_ch, ks=4, stride=2, pad=1, dropout=False):
     layers = [
         nn.ConvTranspose2d(in_ch, out_ch, ks, stride, pad, bias=False),
         nn.BatchNorm2d(out_ch),
-        nn.ReLU(inplace=True),
+        nn.ReLU(inplace=False),
     ]
     if dropout:
         layers.append(nn.Dropout(0.5))
@@ -30,7 +30,7 @@ class DilatedBlock(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(channels, channels, 3, 1, padding=dilation, dilation=dilation, bias=False),
             nn.BatchNorm2d(channels),
-            nn.LeakyReLU(0.2, inplace=True)
+            nn.LeakyReLU(0.2, inplace=False)
         )
     def forward(self, x):
         return self.conv(x)
@@ -50,7 +50,7 @@ class UNetGenerator(nn.Module):
     def __init__(self, in_ch=4, out_ch=3, ngf=64):
         super().__init__()
         # Encoder
-        self.e1 = nn.Sequential(nn.Conv2d(in_ch, ngf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=True))
+        self.e1 = nn.Sequential(nn.Conv2d(in_ch, ngf, 4, 2, 1), nn.LeakyReLU(0.2, inplace=False))
         self.e2 = conv_block(ngf, ngf*2)
         self.e3 = conv_block(ngf*2, ngf*4)
         self.e4 = conv_block(ngf*4, ngf*8)

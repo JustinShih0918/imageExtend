@@ -24,6 +24,17 @@ def deconv_block(in_ch, out_ch, ks=4, stride=2, pad=1, dropout=False):
     return nn.Sequential(*layers)
 
 
+class DilatedBlock(nn.Module):
+    def __init__(self, channels, dilation):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, 1, padding=dilation, dilation=dilation, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+    def forward(self, x):
+        return self.conv(x)
+
 class UNetGenerator(nn.Module):
     """
     U-Net Generator for image inpainting.
@@ -46,7 +57,15 @@ class UNetGenerator(nn.Module):
         self.e5 = conv_block(ngf*8, ngf*8)
         self.e6 = conv_block(ngf*8, ngf*8)
         self.e7 = conv_block(ngf*8, ngf*8)
-        self.e8 = nn.Sequential(nn.Conv2d(ngf*8, ngf*8, 4, 2, 1), nn.ReLU(inplace=True))
+        self.e8_bottleneck = nn.Sequential(
+            nn.Conv2d(ngf*8, ngf*8, 4, 2, 1), 
+            nn.LeakyReLU(0.2, inplace=True),
+            DilatedBlock(ngf*8, dilation=2),
+            DilatedBlock(ngf*8, dilation=4),
+            DilatedBlock(ngf*8, dilation=8),
+            
+            nn.ReLU(inplace=True)
+        )
 
         # Decoder with skip connections
         self.d1 = deconv_block(ngf*8, ngf*8, dropout=True)
@@ -67,7 +86,7 @@ class UNetGenerator(nn.Module):
         e5 = self.e5(e4)
         e6 = self.e6(e5)
         e7 = self.e7(e6)
-        e8 = self.e8(e7)
+        e8 = self.e8_bottleneck(e7)
 
         # Decoder with skip connections
         d1 = self.d1(e8)

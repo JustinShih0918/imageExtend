@@ -20,7 +20,7 @@ from utils.mask_utils import denorm01_to_m11, m11_to_01
 
 # Import perceptual loss (new with losses)
 from utils.losses import VGGPerceptualLoss
-
+from utils.metrics import calculate_psnr
 
 def main():
     ap = argparse.ArgumentParser()
@@ -103,8 +103,16 @@ def main():
             optG.step()
 
             if i % 10 == 0:
+                with torch.no_grad():
+                    # Calculate PSNR between Generated(fake) and Ground Truth(target)
+                    # Note: We can calculate it on the whole image or just the mask region.
+                    # Usually, calculating on the whole image is standard.
+                    current_psnr = calculate_psnr(fake, target)
+
                 print(f"Epoch[{epoch}/{args.epochs}] Batch[{i}] "
-                      f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} | L1_mask={l1_masked.item():.3f}")
+                      f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} "
+                      f"| L1_mask={l1_masked.item():.3f} | VGG={p_loss.item():.3f} "
+                      f"| PSNR={current_psnr.item():.2f} dB") # [NEW] Print PSNR
         
         G.eval()
         with torch.no_grad():

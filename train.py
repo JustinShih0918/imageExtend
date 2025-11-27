@@ -4,6 +4,7 @@ import argparse
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F #new with losses
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
@@ -17,6 +18,9 @@ from datasets.inpainting_dataset import ImageFolderWithMask
 # Import utilities
 from utils.mask_utils import denorm01_to_m11, m11_to_01
 
+# Import perceptual loss (new with losses)
+from utils.losses import VGGPerceptualLoss
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -28,6 +32,7 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--lambda_gan", type=float, default=1.0)
     ap.add_argument("--lambda_l1", type=float, default=100.0)
+    ap.add_argument("--lambda_perceptual", type=float, default=10.0) # New argument for perceptual loss weight
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,8 +47,13 @@ def main():
 
     optG = torch.optim.Adam(G.parameters(), lr=args.lr, betas=(0.5, 0.999))
     optD = torch.optim.Adam(D.parameters(), lr=args.lr, betas=(0.5, 0.999))
-    bce = nn.BCEWithLogitsLoss()
+    
+    # bce = nn.BCEWithLogitsLoss()
+    # l1 = nn.L1Loss(reduction="none")
+    
+    # New loss functions with perceptual loss
     l1 = nn.L1Loss(reduction="none")
+    perceptual_loss = VGGPerceptualLoss().to(device)
 
     print(f"Training on {device} with {len(ds)} images")
 
@@ -60,9 +70,13 @@ def main():
                 fake = G(cond)
             logits_real = D(cond, target)
             logits_fake = D(cond, fake.detach())
-            valid = torch.ones_like(logits_real)
-            fake_lbl = torch.zeros_like(logits_fake)
-            d_loss = 0.5 * (bce(logits_real, valid) + bce(logits_fake, fake_lbl))
+            # valid = torch.ones_like(logits_real)
+            # fake_lbl = torch.zeros_like(logits_fake)
+            # d_loss = 0.5 * (bce(logits_real, valid) + bce(logits_fake, fake_lbl))
+            # New hinge loss for D
+            d_loss_real = torch.mean(F.relu(1.0 - logits_real))
+            d_loss_fake = torch.mean(F.relu(1.0 + logits_fake))
+            d_loss = 0.5 * (d_loss_real + d_loss_fake)
             optD.zero_grad(set_to_none=True)
             d_loss.backward()
             optD.step()
@@ -70,13 +84,20 @@ def main():
             # --- Train G ---
             fake = G(cond)
             logits_fake = D(cond, fake)
-            g_adv = bce(logits_fake, valid)
+            # g_adv = bce(logits_fake, valid)
+            
+            # New hinge loss for G
+            g_adv = -torch.mean(logits_fake)
 
             # masked L1 only on the border region (mask==1)
             l1_map = l1(fake, target)                 # (N,3,H,W), in [-1,1] space
             l1_masked = (l1_map * mask).sum() / (mask.sum() * 3 + 1e-6)
 
-            g_loss = args.lambda_gan * g_adv + args.lambda_l1 * l1_masked
+            # New perceptual loss
+            p_loss = perceptual_loss(fake, target)
+            g_loss = (args.lambda_gan * g_adv) + \
+                     (args.lambda_l1 * l1_masked) + \
+                     (args.lambda_perceptual * p_loss)
             optG.zero_grad(set_to_none=True)
             g_loss.backward()
             optG.step()
@@ -84,19 +105,26 @@ def main():
             if i % 10 == 0:
                 print(f"Epoch[{epoch}/{args.epochs}] Batch[{i}] "
                       f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} | L1_mask={l1_masked.item():.3f}")
-
-        # Visualization each epoch
+        
         G.eval()
         with torch.no_grad():
-            cond_v, target_v, mask_v = next(iter(dl))
+            # [MODIFIED] Robust iterator handling and mask visualization
+            try:
+                cond_v, target_v, mask_v = next(iter(dl))
+            except StopIteration:
+                # Restart iterator if needed
+                cond_v, target_v, mask_v = next(iter(DataLoader(ds, batch_size=args.batch_size)))
+
             cond_v = cond_v.to(device); target_v = target_v.to(device)
             out_v = G(cond_v)
+            
             vis = torch.cat([
                 cond_v[:, :3],                         # masked RGB
-                cond_v[:, 3:].repeat(1,3,1,1),         # mask as 3ch
+                cond_v[:, 3:].repeat(1,3,1,1),         # mask as 3ch (Visualizing the hole)
                 m11_to_01(out_v).clamp(0,1),           # prediction
-                target_v                                # ground truth
+                target_v                               # ground truth
             ], dim=0)
+            
             save_image(vis, os.path.join(args.out_dir, f"epoch_{epoch:03d}.png"),
                        nrow=cond_v.shape[0], padding=2)
 

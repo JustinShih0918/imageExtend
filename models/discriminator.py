@@ -1,14 +1,14 @@
 # models/discriminator.py
 import torch
 import torch.nn as nn
+from torch.nn.utils import spectral_norm
 
+from torch.nn.utils import spectral_norm
 
-def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=True, leaky=True):
-    """Convolution block with optional normalization and activation."""
-    layers = [nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=not norm)]
-    if norm:
-        layers.append(nn.BatchNorm2d(out_ch))
-    layers.append(nn.LeakyReLU(0.2, inplace=True) if leaky else nn.ReLU(inplace=True))
+def conv_block(in_ch, out_ch, ks=4, stride=2, pad=1, norm=False, leaky=True):
+
+    layers = [spectral_norm(nn.Conv2d(in_ch, out_ch, ks, stride, pad, bias=True))]
+    layers.append(nn.LeakyReLU(0.2, inplace=True))
     return nn.Sequential(*layers)
 
 

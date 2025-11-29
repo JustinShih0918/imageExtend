@@ -74,7 +74,7 @@ Training progress will be displayed, and sample outputs will be saved in the `ou
 #### output_picture
 
 ```bash
-python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size True
+python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size
 ```
 
 You can change some parameter's value.   
@@ -82,7 +82,7 @@ You can change some parameter's value.
 
 `--output_dir` (default: results_compparison)：Where the output would be saved.
 
-`--image_size` (default: 256)：Images are resized to (image_size, image_size) before inference.
+`--image_size` (default: 192)：Images are resized to (image_size, image_size) before inference.
 
 `--checkpoint` (default: checkpoints/G_epoch_010.pt; If missing, the newest in checkpoints/ is used)：Generator checkpoint path to load.
 
@@ -93,7 +93,7 @@ You can change some parameter's value.
 #### output video
 
 ```bash
-python test_video.py --input test_video.mp4 --output_dir results_video --image_size 256 --extend 64 --frames_count 1 --restore_size
+python test_video.py --input test_video.mp4 --output_dir results_video --image_size 192 --extend 64 --frames_count 1
 ```
 
 You can change some parameter's value.   
@@ -101,7 +101,7 @@ You can change some parameter's value.
 
 `--output_dir` (default: results_video)：Where the output video, original video frames and predicted video frames would be saved.
 
-`--image_size` (default: 256)：Images are resized to (image_size, image_size) before inference.
+`--image_size` (default: 192)：Images are resized to (image_size, image_size) before inference.
 
 `--checkpoint` (default: checkpoints/G_epoch_010.pt; If missing, the newest in checkpoints/ is used)：Generator checkpoint path to load.
 

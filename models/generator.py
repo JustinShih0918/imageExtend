@@ -57,14 +57,19 @@ class UNetGenerator(nn.Module):
         self.e5 = conv_block(ngf*8, ngf*8)
         self.e6 = conv_block(ngf*8, ngf*8)
         self.e7 = conv_block(ngf*8, ngf*8)
-        self.e8_bottleneck = nn.Sequential(
-            nn.Conv2d(ngf*8, ngf*8, 4, 2, 1), 
-            nn.LeakyReLU(0.2, inplace=True),
+        self.e8 = nn.Sequential(
+            
+            nn.Conv2d(ngf*8, ngf*8, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=False),
+            
+        
             DilatedBlock(ngf*8, dilation=2),
             DilatedBlock(ngf*8, dilation=4),
             DilatedBlock(ngf*8, dilation=8),
+            DilatedBlock(ngf*8, dilation=4),
+            DilatedBlock(ngf*8, dilation=2),
             
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False)
         )
 
         # Decoder with skip connections
@@ -86,7 +91,7 @@ class UNetGenerator(nn.Module):
         e5 = self.e5(e4)
         e6 = self.e6(e5)
         e7 = self.e7(e6)
-        e8 = self.e8_bottleneck(e7)
+        e8 = self.e8(e7)
 
         # Decoder with skip connections
         d1 = self.d1(e8)

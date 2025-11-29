@@ -3,7 +3,7 @@ import random
 import torch
 
 
-def make_random_border_mask(h, w, max_ratio=0.25):
+def make_random_border_mask(h, w, max_ratio=0.5):
     """
     Create a random border mask for image inpainting.
     

@@ -22,6 +22,8 @@ from utils.mask_utils import denorm01_to_m11, m11_to_01
 from utils.losses import VGGPerceptualLoss
 from utils.metrics import calculate_psnr
 
+import datetime
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_dir", type=str, default="data/train")
@@ -56,6 +58,7 @@ def main():
     perceptual_loss = VGGPerceptualLoss().to(device)
 
     print(f"Training on {device} with {len(ds)} images")
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Starting Training")
 
     for epoch in range(1, args.epochs + 1):
         G.train(); D.train()

@@ -74,7 +74,7 @@ Training progress will be displayed, and sample outputs will be saved in the `ou
 #### output_picture
 
 ```bash
-python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size True
+python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size
 ```
 
 You can change some parameter's value.   
@@ -93,7 +93,7 @@ You can change some parameter's value.
 #### output video
 
 ```bash
-python test_video.py --input test_video.mp4 --output_dir results_video --image_size 192 --extend 64 --frames_count 1 --restore_size
+python test_video.py --input test_video.mp4 --output_dir results_video --image_size 192 --extend 64 --frames_count 1
 ```
 
 You can change some parameter's value.   

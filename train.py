@@ -19,6 +19,7 @@ from datasets.inpainting_dataset import ImageFolderWithMask
 # Import utilities
 from utils.mask_utils import denorm01_to_m11, m11_to_01
 
+from utils.metrics import calculate_psnr
 
 import datetime
 
@@ -120,12 +121,19 @@ def main():
             scaler.scale(g_loss).backward()
             scaler.step(optG)
             scaler.update()
+            
+            with torch.no_grad():
+                    # Calculate PSNR between Generated(fake) and Ground Truth(target)
+                    # Note: We can calculate it on the whole image or just the mask region.
+                    # Usually, calculating on the whole image is standard.
+                    current_psnr = calculate_psnr(fake, target)
 
             # Log
             if i % 50 == 0: 
                 print(f"Epoch[{epoch}/{args.epochs}] Batch[{i}] "
                       f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} "
-                      f"| L1={l1_masked.item():.3f} | FM={fm_loss.item():.3f}") 
+                      f"| L1={l1_masked.item():.3f} | FM={fm_loss.item():.3f}"
+                      f"| PSNR={current_psnr.item():.2f} dB") 
 
         
         # Visualization

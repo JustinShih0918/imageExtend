@@ -71,7 +71,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", type=str, required=True, help="input video path")
     ap.add_argument("--output_dir", type=str, default="results_video", help="output video (no audio)")
-    ap.add_argument("--checkpoint", type=str, default="checkpoints/G_epoch_010.pt")
+    ap.add_argument("--checkpoint", type=str, default="checkpoints/G_epoch_064.pt")
     ap.add_argument("--image_size", type=int, default=192)   # S
     ap.add_argument("--extend", type=int, default=64)        # n (四邊等寬)
     ap.add_argument("--frames_count", type=int, default=1, help="frames sampled per second AND output fps")
@@ -173,7 +173,7 @@ def main():
 
     cap.release()
     writer.release()
-    print(f"[done] sampled {target_fps} fps → wrote {kept} frames at {target_fps} FPS to {os.path.join(save_dir, "out_sampled.mp4")}")
+    print(f'[done] sampled {target_fps} fps → wrote {kept} frames at {target_fps} FPS to {os.path.join(save_dir, "out_sampled.mp4")}')
 
 if __name__ == "__main__":
     main()

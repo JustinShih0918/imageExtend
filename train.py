@@ -57,15 +57,12 @@ def main():
     l1 = nn.L1Loss(reduction="none")
     l1_loss_fn = nn.L1Loss() 
 
-<<<<<<< HEAD
 
     scaler = GradScaler()
 
     print(f"Training on {device} with {len(ds)} images using Feature Matching...")
-=======
-    print(f"Training on {device} with {len(ds)} images")
+
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Starting Training")
->>>>>>> 41ec81b453937f1aa39b59f0e8b9fd1a5fb71b23
 
     for epoch in range(1, args.epochs + 1):
         G.train(); D.train()

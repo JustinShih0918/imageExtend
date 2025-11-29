@@ -26,6 +26,7 @@ checkpoint_test
 !results_video/pred_frames/.gitkeep
 !checkpoints/
 !checkpoints/.gitkeep
+!checkpoints/G_epoch_064.pt
 !outputs/
 !outputs/.gitkeep
 

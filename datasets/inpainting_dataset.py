@@ -26,7 +26,7 @@ class ImageFolderWithMask(Dataset):
         max_ratio: Maximum ratio of each side to mask (default: 0.25)
         min_bytes: Minimum file size in bytes to consider (default: 5KB)
     """
-    def __init__(self, root, image_size=256, max_ratio=0.25, min_bytes=5*1024):
+    def __init__(self, root, image_size=256, max_ratio=0.5, min_bytes=5*1024):
         self.paths = []
         self.max_ratio = max_ratio
         root = Path(root)

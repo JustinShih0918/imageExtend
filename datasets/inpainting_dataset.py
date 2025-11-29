@@ -47,11 +47,15 @@ class ImageFolderWithMask(Dataset):
                     continue
         
         print(f"Found {len(self.paths)} image files")
-
+        TARGET_COUNT = 30000
         if not self.paths:
             raise FileNotFoundError(f"No valid images found in {root.resolve()}")
 
-        random.shuffle(self.paths)
+        
+        if len(self.paths) > TARGET_COUNT:
+            random.shuffle(self.paths) 
+            self.paths = self.paths[:TARGET_COUNT] 
+            print(f"dataset truncated to {len(self.paths)} images for faster training.")
         
         # Image preprocessing pipeline
         self.to_tensor = transforms.Compose([
@@ -78,7 +82,7 @@ class ImageFolderWithMask(Dataset):
                 with Image.open(p) as im:
                     im.load()
                     img = im.convert("RGB")
-                
+                    # print(f"Loading image size: {im.size}")
                 img = self.to_tensor(img)  # (3, H, W)
                 _, H, W = img.shape
 

@@ -173,7 +173,7 @@ def main():
 
     cap.release()
     writer.release()
-    print(f"[done] sampled {target_fps} fps → wrote {kept} frames at {target_fps} FPS to {os.path.join(save_dir, "out_sampled.mp4")}")
+    print(f'[done] sampled {target_fps} fps → wrote {kept} frames at {target_fps} FPS to {os.path.join(save_dir, "out_sampled.mp4")}')
 
 if __name__ == "__main__":
     main()

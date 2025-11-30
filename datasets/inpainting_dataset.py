@@ -47,7 +47,7 @@ class ImageFolderWithMask(Dataset):
                     continue
         
         print(f"Found {len(self.paths)} image files")
-        TARGET_COUNT = 30000
+        TARGET_COUNT = 20000
         if not self.paths:
             raise FileNotFoundError(f"No valid images found in {root.resolve()}")
 

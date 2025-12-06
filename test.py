@@ -104,7 +104,7 @@ def forward_with_auto_snap(G, canvas, mask, multiples=(64, 128, 256, 512), pad_m
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--test_dir", type=str, default="data/test")
-    ap.add_argument("--output_dir", type=str, default="results_comparison")
+    ap.add_argument("--output_dir", type=str, default="results")
     ap.add_argument("--image_size", type=int, default=192, help="base S; the original gets resized to SxS before extension")
     ap.add_argument("--checkpoint", type=str, default="checkpoints/G_epoch_010.pt")
 

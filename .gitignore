@@ -4,7 +4,6 @@ results_comparison/**
 results_video/**
 checkpoints/**
 outputs/**
-checkpoint_test
 
 # But keep these directories (via .gitkeep files)
 !data/
@@ -16,8 +15,8 @@ checkpoint_test
 !data/val/.gitkeep
 
 # Keep these empty directories
-!results_comparison/
-!results_comparison/.gitkeep
+!results/
+!results/.gitkeep
 !results_video/
 !results_video/.gitkeep
 !results_video/orig_frames/

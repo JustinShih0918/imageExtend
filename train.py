@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image
+from utils.metrics import calculate_psnr
 
 # [FIX] Updated import for modern PyTorch AMP to avoid warnings
 from torch.amp import autocast, GradScaler 
@@ -133,9 +134,14 @@ def main():
 
             # Log
             if i % 50 == 0: 
+                with torch.no_grad():
+                    # Calculate PSNR between Generated(fake) and Ground Truth(target)
+                    # Note: We can calculate it on the whole image or just the mask region.
+                    # Usually, calculating on the whole image is standard.
+                    current_psnr = calculate_psnr(fake, target)
                 print(f"Epoch[{epoch}/{args.epochs}] Batch[{i}] "
                       f"| L_D={d_loss.item():.3f} | G_adv={g_adv.item():.3f} "
-                      f"| L1={l1_masked.item():.3f} | FM={fm_loss.item():.3f}") 
+                      f"| L1={l1_masked.item():.3f} | FM={fm_loss.item():.3f} | PSNR={current_psnr:.3f}") 
 
         
         # Visualization

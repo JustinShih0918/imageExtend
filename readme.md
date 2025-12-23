@@ -74,13 +74,13 @@ Training progress will be displayed, and sample outputs will be saved in the `ou
 #### output_picture
 
 ```bash
-python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size
+python test.py --test_dir data/test --output_dir results --extend 64 --restore_size
 ```
 
 You can change some parameter's value.   
 `--test_dir` (default: data/test)：Folder containing test images.
 
-`--output_dir` (default: results_compparison)：Where the output would be saved.
+`--output_dir` (default: results)：Where the output would be saved.
 
 `--image_size` (default: 192)：Images are resized to (image_size, image_size) before inference.
 

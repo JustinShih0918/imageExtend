@@ -4,6 +4,8 @@
 
 ImageExtend is a deep learning project that performs **image outpainting** (image extension beyond original boundaries) using a Generative Adversarial Network (GAN) architecture. The system employs a UNet Generator and Patch Discriminator to realistically extend images in all directions.
 
+**Interactive Web App**: Try our visualize web application at [https://github.com/JustinShih0918/video_expend_web.git](https://github.com/JustinShih0918/video_expend_web.git)
+
 ---
 
 ## Quick Start - Reproducing Results

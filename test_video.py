@@ -125,9 +125,16 @@ def main():
     save_dir = args.output_dir
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(os.path.join(save_dir, "out_sampled.mp4"), fourcc, float(target_fps), (out_w, out_h))
+    # original video
+    writer_orig = cv2.VideoWriter(os.path.join(save_dir, "orig_sampled.mp4"), fourcc, float(target_fps), (S, S))
     if not writer.isOpened():
         cap.release()
         raise RuntimeError("Failed to open VideoWriter")
+    
+    if not writer_orig.isOpened():
+        cap.release()
+        writer.release()
+        raise RuntimeError("Failed to open VideoWriter for original video")
 
     # save dirs
     if save_dir:
@@ -143,6 +150,8 @@ def main():
         t_ms = i * interval_ms
         cap.set(cv2.CAP_PROP_POS_MSEC, t_ms)
         ok, frame_bgr = cap.read()
+        # resize original frame to SxS first
+        frame_bgr = cv2.resize(frame_bgr, (S, S), interpolation=cv2.INTER_AREA)
         if not ok:
             continue
 
@@ -167,7 +176,7 @@ def main():
 
         if save_dir:
             cv2.imwrite(os.path.join(pred_dir, f"frame_{kept:06d}.png"), out_bgr)
-
+        writer_orig.write(frame_bgr)
         writer.write(out_bgr)
         kept += 1
 

@@ -1,36 +1,32 @@
 # ImageExtend: GAN Image and Video Outpainting
 
-ImageExtend is the model-training repository behind the [GAN Video Outpainting Web App](https://github.com/JustinShih0918/video_expend_web). It trains and evaluates a GAN-based image outpainting system that extends visual content beyond the original image boundaries using a gated U-Net generator and PatchGAN discriminator.
+ImageExtend is a PyTorch project for image outpainting: extending visual content beyond the original image boundaries with a GAN-based model. The repository contains the model architecture, training loop, dataset preprocessing, image inference, video inference, and evaluation utilities.
 
-## Resume Summary
+The trained generator is used by the companion web application: [video_expend_web](https://github.com/JustinShih0918/video_expend_web).
 
-Built a PyTorch GAN pipeline for image outpainting, including dataset preprocessing, mask generation, gated U-Net generator architecture, PatchGAN discriminator, adversarial training, L1 reconstruction loss, feature matching loss, PSNR/SSIM evaluation utilities, image inference, video frame inference, and downloadable pretrained checkpoints. The trained generator is reused by `video_expend_web` to power a full-stack video expansion application.
+## Overview
 
-## Project Role
-
-This repository focuses on the ML system:
+This repository focuses on the model pipeline:
 
 - model architecture;
 - training loop;
 - loss functions;
 - dataset preprocessing;
 - checkpointing;
-- image/video inference scripts;
+- image and video inference scripts;
 - quantitative and visual evaluation.
 
-The companion repository [`video_expend_web`](https://github.com/JustinShih0918/video_expend_web) focuses on productization: web upload UI, FastAPI backend, FFmpeg transcoding, progress tracking, Docker deployment, and synchronized playback.
+## Features
 
-## Key Features
-
-- **Gated U-Net generator**: encoder-decoder model with skip connections, gated convolutions, dilated bottleneck layers, and `tanh` RGB output.
-- **PatchGAN discriminator**: spectral-normalized discriminator that returns both logits and intermediate features for feature matching.
+- **Gated U-Net generator**: encoder-decoder model with skip connections, gated convolutions, dilated bottleneck layers, and RGB output.
+- **PatchGAN discriminator**: spectral-normalized discriminator that returns logits and intermediate features.
 - **Mask-conditioned outpainting**: model input combines masked RGB content and a binary mask channel.
 - **GAN training objective**: combines hinge adversarial loss, masked L1 reconstruction loss, and feature matching loss.
-- **Preprocessing pipeline**: optional offline resizing to 256x256 for substantially faster training.
-- **Image inference**: extends images from the test directory and saves comparison results.
+- **Preprocessing pipeline**: optional offline resizing to 256x256 for faster training.
+- **Image inference**: extends images from a test directory and saves comparison results.
 - **Video inference**: samples video frames, applies outpainting frame by frame, and writes extended output video plus frame folders.
 - **Metrics**: PSNR and SSIM utilities for evaluation.
-- **Pretrained checkpoint**: downloadable generator weights for quick inference.
+- **Pretrained checkpoint**: downloadable generator weights for inference.
 
 ## Architecture
 
@@ -71,7 +67,7 @@ The generator is implemented in [`models/generator.py`](models/generator.py):
 The discriminator is implemented in [`models/discriminator.py`](models/discriminator.py):
 
 - condition image and generated/real target are concatenated;
-- spectral normalization stabilizes adversarial training;
+- spectral normalization is used in convolution layers;
 - intermediate features are returned for feature matching loss;
 - final output is a patch-level realism map.
 
@@ -149,7 +145,7 @@ Recommended dataset: [COCO 2017](https://www.kaggle.com/datasets/awsaf49/coco-20
 
 ### 2. Preprocess Images
 
-Offline resizing is recommended because it significantly reduces per-epoch training overhead.
+Offline resizing reduces per-epoch training overhead.
 
 ```bash
 python resize_data.py
@@ -235,13 +231,6 @@ The repository supports both qualitative and quantitative evaluation:
 - side-by-side image comparison outputs;
 - video frame output folders;
 - PSNR and SSIM metrics through `utils/metrics.py`.
-
-## Good Next Improvements
-
-- Add sample before/after images directly to the README.
-- Add a small public fixture dataset for one-command smoke testing.
-- Add a model card describing training data, limitations, and failure cases.
-- Add reproducible experiment configs for different loss weights and mask sizes.
 
 ## License
 

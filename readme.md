@@ -1,318 +1,248 @@
-# ImageExtend: Deep Learning Image Outpainting
+# ImageExtend: GAN Image and Video Outpainting
 
-## Project Overview
+ImageExtend is the model-training repository behind the [GAN Video Outpainting Web App](https://github.com/JustinShih0918/video_expend_web). It trains and evaluates a GAN-based image outpainting system that extends visual content beyond the original image boundaries using a gated U-Net generator and PatchGAN discriminator.
 
-ImageExtend is a deep learning project that performs **image outpainting** (image extension beyond original boundaries) using a Generative Adversarial Network (GAN) architecture. The system employs a UNet Generator and Patch Discriminator to realistically extend images in all directions.
+## Resume Summary
 
-**Interactive Web App**: Try our visualize web application at [https://github.com/JustinShih0918/video_expend_web.git](https://github.com/JustinShih0918/video_expend_web.git)
+Built a PyTorch GAN pipeline for image outpainting, including dataset preprocessing, mask generation, gated U-Net generator architecture, PatchGAN discriminator, adversarial training, L1 reconstruction loss, feature matching loss, PSNR/SSIM evaluation utilities, image inference, video frame inference, and downloadable pretrained checkpoints. The trained generator is reused by `video_expend_web` to power a full-stack video expansion application.
 
----
+## Project Role
 
-## Quick Start - Reproducing Results
+This repository focuses on the ML system:
+
+- model architecture;
+- training loop;
+- loss functions;
+- dataset preprocessing;
+- checkpointing;
+- image/video inference scripts;
+- quantitative and visual evaluation.
+
+The companion repository [`video_expend_web`](https://github.com/JustinShih0918/video_expend_web) focuses on productization: web upload UI, FastAPI backend, FFmpeg transcoding, progress tracking, Docker deployment, and synchronized playback.
+
+## Key Features
+
+- **Gated U-Net generator**: encoder-decoder model with skip connections, gated convolutions, dilated bottleneck layers, and `tanh` RGB output.
+- **PatchGAN discriminator**: spectral-normalized discriminator that returns both logits and intermediate features for feature matching.
+- **Mask-conditioned outpainting**: model input combines masked RGB content and a binary mask channel.
+- **GAN training objective**: combines hinge adversarial loss, masked L1 reconstruction loss, and feature matching loss.
+- **Preprocessing pipeline**: optional offline resizing to 256x256 for substantially faster training.
+- **Image inference**: extends images from the test directory and saves comparison results.
+- **Video inference**: samples video frames, applies outpainting frame by frame, and writes extended output video plus frame folders.
+- **Metrics**: PSNR and SSIM utilities for evaluation.
+- **Pretrained checkpoint**: downloadable generator weights for quick inference.
+
+## Architecture
+
+```text
+Training images
+  -> Resize / dataset preprocessing
+  -> Random mask generation
+  -> Condition tensor: masked RGB + mask
+  -> Gated U-Net generator
+  -> PatchGAN discriminator
+  -> Hinge GAN loss + masked L1 loss + feature matching loss
+  -> Checkpointed generator and discriminator
+
+Inference image or video frame
+  -> Resize to input square
+  -> Center on larger canvas
+  -> Build outpainting mask
+  -> Generator predicts missing border content
+  -> Merge generated border with original center
+  -> Save image/video output
+```
+
+## Model Details
+
+### Generator
+
+The generator is implemented in [`models/generator.py`](models/generator.py):
+
+- 4-channel input: RGB image plus mask;
+- gated convolution blocks for mask-aware feature learning;
+- encoder downsampling stages;
+- dilated bottleneck layers for larger receptive fields;
+- decoder upsampling with skip connections;
+- 3-channel RGB output.
+
+### Discriminator
+
+The discriminator is implemented in [`models/discriminator.py`](models/discriminator.py):
+
+- condition image and generated/real target are concatenated;
+- spectral normalization stabilizes adversarial training;
+- intermediate features are returned for feature matching loss;
+- final output is a patch-level realism map.
+
+## Tech Stack
+
+| Area | Tools |
+| --- | --- |
+| Language | Python 3.10+ |
+| Deep Learning | PyTorch, TorchVision, AMP mixed precision |
+| Computer Vision | OpenCV, Pillow, NumPy |
+| Training | GAN, gated U-Net, PatchGAN, hinge loss, feature matching |
+| Metrics | PSNR, SSIM |
+| Data | COCO 2017 or custom image folders |
+
+## Quick Start
 
 ### 1. Environment Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/JustinShih0918/imageExtend.git
 cd imageExtend
-
-# Setup conda environment (automatically installs all dependencies)
 chmod +x env_setup.sh
 ./env_setup.sh
-
-# Activate the environment
 conda activate imgext
 ```
 
-### 2. Download Pre-trained Model
+You can also install dependencies manually:
 
-The pre-trained model is too large for GitHub. Download it from Google Drive:
-
-**Download Link**: [Pre-trained Model (G_epoch_063.pt)](https://drive.google.com/file/d/1bRubCe_ZZlu8Vu95C4BUnEU45e_mm0FO/view?usp=sharing)
-
-After downloading, place the file in the `checkpoints/` directory:
-```bash
-# Create checkpoints directory if it doesn't exist
-mkdir -p checkpoints
-# Move the downloaded model to checkpoints/
-mv ~/Downloads/G_epoch_063.pt checkpoints/
-```
-
-### 3. Test with Pre-trained Model (Inference Only)
-
-Once the model is in place, test immediately:
-
-```bash
-# Test on images
-python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size
-
-# Test on video
-python test_video.py --input test_video.mp4 --output_dir results_video --extend 64
-```
-
-Results will be saved in `results_comparison/` (for images) or `results_video/` (for videos).
-
-### 4. Training from Scratch (Optional)
-
-**Step 1: Prepare Training Data**
-```bash
-# Download COCO 2017 from Kaggle and extract train2017 folder
-# Place images in data/train/ directory
-```
-
-**Step 2: Preprocess Data (Recommended for 10x Speed Improvement)**
-```bash
-# Resize all images to 256x256 offline (takes 20-40 minutes, saves days of training time)
-python resize_data.py
-```
-
-**Step 3: Start Training**
-```bash
-# Train on pre-resized data for faster performance
-python train.py --data_dir data/train_256 --epochs 100 --batch_size 32
-```
-
----
-
-## Repository Structure
-
-```
-imageExtend/
-├── README.md                    
-├── requirements.txt             # Python dependencies
-├── env_setup.sh                 # Environment setup script
-├── env_active.sh                # Quick activation script
-│
-├── models/                      # Model architectures
-│   ├── generator.py             # UNet Generator
-│   ├── discriminator.py         # Patch Discriminator
-│   └── __init__.py
-│
-├── datasets/                    # Data loading and processing
-│   ├── image_dataset.py         # Image dataset loader
-│   ├── inpainting_dataset.py   # Inpainting dataset with masking
-│   └── __init__.py
-│
-├── utils/                       # Utility functions
-│   ├── losses.py                # Loss functions (GAN, L1, perceptual)
-│   ├── mask_utils.py            # Mask generation utilities
-│   ├── metrics.py               # Evaluation metrics (PSNR, SSIM)
-│   └── resize_utils.py          # Image resizing utilities
-│
-├── train.py                     # Training script
-├── test.py                      # Testing script (images)
-├── test_video.py                # Testing script (videos)
-├── resize.py                    # Image resizing utility
-│
-├── checkpoints/                 # Model checkpoints
-│   └── G_epoch_063.pt          # Pre-trained generator (download from Google Drive)
-│
-├── data/                        # Data directory
-│   ├── train/                   # Training images (user-provided)
-│   ├── test/                    # Test images (user-provided)
-│   └── val/                     # Validation images (optional)
-│
-├── outputs/                     # Training outputs (sample images per epoch)
-├── results_comparison/          # Test results (images)
-└── results_video/               # Test results (videos)
-    ├── orig_frames/             # Original video frames
-    └── pred_frames/             # Extended video frames
-```
-
----
-
-## Dataset Access
-
-### Training Data
-- **Required Format**: JPEG/PNG images
-- **Location**: Place training images in `data/train/` directory
-- **Recommended Dataset**: [COCO 2017](https://www.kaggle.com/datasets/awsaf49/coco-2017-dataset/data)
-  - Download from Kaggle
-  - Extract the `train2017` folder
-  - Place images in `data/train/`
-- **Preprocessing (Highly Recommended)**: 
-  - Run `python resize_data.py` to resize images to 256x256 offline
-  - Processed images saved to `data/train_256/`
-  - **Benefit**: Up to 10x faster training (preprocessing takes 20-40 minutes but saves days)
-- **Alternative Datasets**: Places365 or custom high-quality images (minimum 256x256 pixels)
-
-### Test Data
-- **Included**: Sample test images are located in `data/test/`
-- **Custom Testing**: Add your own images to `data/test/` directory
-
-### Pre-trained Model
-- **Download**: [Google Drive Link](https://drive.google.com/file/d/1bRubCe_ZZlu8Vu95C4BUnEU45e_mm0FO/view?usp=sharing)
-- **Installation**: Download and place in `checkpoints/G_epoch_063.pt`
-- **Training Details**: Trained for 63 epochs on diverse image dataset
-
----
-
-## Detailed Usage Instructions
-
-### Training
-
-**Recommended: Training with Preprocessed Data (Much Faster)**
-```bash
-# First, preprocess your data
-python resize_data.py
-
-# Then train on pre-resized images
-python train.py --data_dir data/train_256 --epochs 100 --batch_size 32
-```
-
-**Alternative: Training without Preprocessing (Slower)**
-```bash
-python train.py --data_dir data/train --epochs 20 --batch_size 8
-```
-
-**Training Parameters:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--data_dir` | `data/train` | Directory containing training images (use `data/train_256` for pre-resized) |
-| `--out_dir` | `outputs` | Directory for visualized training outputs |
-| `--checkpoint` | `checkpoints` | Directory to save model checkpoints |
-| `--epochs` | `20` | Number of training epochs (recommended: 100 for full training) |
-| `--batch_size` | `8` | Batch size (use 32 with preprocessed data, reduce to 16/8 if low VRAM) |
-| `--image_size` | `256` | Image resize dimension (256x256) |
-| `--lr` | `2e-4` | Learning rate for Adam optimizer |
-| `--lambda_gan` | `1.0` | Weight for adversarial loss (Hinge Loss) |
-| `--lambda_l1` | `100.0` | Weight for L1 reconstruction loss (higher = more fidelity) |
-| `--lambda_fm` | `10.0` | Weight for Feature Matching Loss (higher = better structure) |
-
-**Training Outputs:**
-- Checkpoints saved to: `checkpoints/G_epoch_XXX.pt`, `checkpoints/D_epoch_XXX.pt`
-- Sample images per epoch: `outputs/`
-
-### Testing (Images)
-
-**Basic Testing:**
-```bash
-python test.py --test_dir data/test --output_dir results_comparison --extend 64 --restore_size
-```
-
-**Testing Parameters:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--test_dir` | `data/test` | Folder containing test images |
-| `--output_dir` | `results_comparison` | Where outputs are saved |
-| `--image_size` | `192` | Resize dimension before inference |
-| `--checkpoint` | `checkpoints/G_epoch_010.pt` | Generator checkpoint path (auto-selects newest if missing) |
-| `--extend` | `64` | Padding size for extension |
-| `--restore_size` | `False` | Flag: restore to original aspect ratio |
-
-### Testing (Videos)
-
-**Basic Video Testing:**
-```bash
-python test_video.py --input test_video.mp4 --output_dir results_video --extend 64
-```
-
-**Video Testing Parameters:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--input` | *Required* | Input video filename |
-| `--output_dir` | `results_video` | Output directory for video and frames |
-| `--image_size` | `192` | Resize dimension before inference |
-| `--checkpoint` | `checkpoints/G_epoch_010.pt` | Generator checkpoint path |
-| `--extend` | `64` | Padding size for extension |
-| `--frames_count` | `1` | Frame sampling rate (1 = every frame) |
-| `--restore_size` | `False` | Flag: restore to original aspect ratio |
-
-**Video Outputs:**
-- Extended video: `results_video/output.mp4`
-- Original frames: `results_video/orig_frames/`
-- Extended frames: `results_video/pred_frames/`
-
----
-
-## System Requirements
-
-### Dependencies
-- **Python**: 3.10+
-- **PyTorch**: GPU-accelerated (CUDA recommended)
-- **Key Libraries**:
-  - torchvision
-  - Pillow
-  - numpy
-  - matplotlib
-  - pytorch_msssim (for SSIM metric)
-  - opencv-python (for video processing)
-  - moviepy (for video I/O)
-
-All dependencies are automatically installed via `env_setup.sh` or can be manually installed:
 ```bash
 pip install -r requirements.txt
 ```
 
-### Hardware Recommendations
-- **GPU**: NVIDIA GPU with 8GB+ VRAM (for training)
-- **CPU**: Multi-core processor (for inference)
-- **RAM**: 16GB+ recommended
-- **Storage**: 10GB+ free space for datasets and outputs
+### 2. Download Pretrained Model
 
----
+Download the pretrained generator checkpoint:
 
-## Results and Examples
+[Download G_epoch_063.pt](https://drive.google.com/file/d/1bRubCe_ZZlu8Vu95C4BUnEU45e_mm0FO/view?usp=sharing)
 
-### Expected Outputs
-- **Training Progress**: Visualized sample outputs saved per epoch in `outputs/`
-- **Test Results**: Side-by-side comparisons (input vs. extended) in `results_comparison/`
-- **Video Results**: Extended videos with original and predicted frames in `results_video/`
+Place it under:
 
-### Model Performance
-- **Architecture**: UNet Generator with skip connections, Patch Discriminator
-- **Loss Functions**: 
-  - Hinge Loss (adversarial)
-  - L1 Reconstruction Loss (pixel-level fidelity)
-  - Feature Matching Loss (structural consistency)
-- **Evaluation Metrics**: PSNR, SSIM (implemented in `utils/metrics.py`)
-
----
-
-## Key Features
-
-- **Realistic Image Extension**: Extends images in all directions seamlessly
-- **Video Support**: Process videos frame-by-frame with temporal consistency
-- **Pre-trained Model Available**: Ready-to-use checkpoint downloadable from Google Drive
-- **Flexible Training**: Customizable hyperparameters and loss weights
-- **GPU Acceleration**: Optimized for CUDA-enabled GPUs
-- **Comprehensive Utilities**: Masking, metrics, and loss functions included
-
----
-
-## Environment Management
-
-```bash
-# Activate environment
-conda activate imgext
-
-# Deactivate environment
-conda deactivate
-
-# Quick activation (if env_active.sh is configured)
-source env_active.sh
+```text
+checkpoints/G_epoch_063.pt
 ```
 
----
+### 3. Image Inference
 
-## Additional Scripts
+```bash
+python test.py \
+  --test_dir data/test \
+  --output_dir results_comparison \
+  --extend 64 \
+  --restore_size
+```
 
-- **`resize_data.py`**: Preprocesses training data by resizing to 256x256 (highly recommended for 10x training speedup)
-- **`resize.py`**: Utility for batch image resizing
-- **`PY.py`**: Additional Python utilities
+### 4. Video Inference
 
----
+```bash
+python test_video.py \
+  --input test_video.mp4 \
+  --output_dir results_video \
+  --extend 64
+```
 
-## Contributing
+## Training From Scratch
 
-This is a course project for ML Final Project. For questions or issues, please contact the repository owner.
+### 1. Prepare Data
 
----
+Place training images under:
+
+```text
+data/train/
+```
+
+Recommended dataset: [COCO 2017](https://www.kaggle.com/datasets/awsaf49/coco-2017-dataset/data)
+
+### 2. Preprocess Images
+
+Offline resizing is recommended because it significantly reduces per-epoch training overhead.
+
+```bash
+python resize_data.py
+```
+
+The processed images are saved to:
+
+```text
+data/train_256/
+```
+
+### 3. Train
+
+```bash
+python train.py \
+  --data_dir data/train_256 \
+  --epochs 50 \
+  --batch_size 16
+```
+
+Training saves:
+
+- generator checkpoints: `checkpoints/G_epoch_XXX.pt`
+- discriminator checkpoints: `checkpoints/D_epoch_XXX.pt`
+- visual samples: `outputs/epoch_XXX.png`
+
+## Training Parameters
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `--data_dir` | `data/train_256` | Directory containing training images |
+| `--out_dir` | `outputs` | Directory for visualized training outputs |
+| `--epochs` | `50` | Number of training epochs |
+| `--batch_size` | `16` | Batch size |
+| `--image_size` | `256` | Training image size |
+| `--lr` | `2e-4` | Adam learning rate |
+| `--lambda_gan` | `1.0` | Adversarial loss weight |
+| `--lambda_l1` | `10.0` | Masked L1 reconstruction loss weight |
+| `--lambda_fm` | `40.0` | Feature matching loss weight |
+
+## Repository Structure
+
+```text
+imageExtend/
+├── readme.md
+├── requirements.txt
+├── env_setup.sh
+├── models/
+│   ├── generator.py             # Gated U-Net generator
+│   └── discriminator.py         # PatchGAN discriminator
+├── datasets/
+│   ├── image_dataset.py
+│   └── inpainting_dataset.py
+├── utils/
+│   ├── losses.py
+│   ├── mask_utils.py
+│   ├── metrics.py
+│   └── resize_utils.py
+├── train.py                     # GAN training loop
+├── test.py                      # Image inference
+├── test_video.py                # Video inference
+├── resize_data.py               # Offline dataset preprocessing
+├── checkpoints/                 # Model checkpoints, not committed
+├── data/                        # Training/test data, user-provided
+├── outputs/                     # Training visualizations
+├── results_comparison/          # Image inference outputs
+└── results_video/               # Video inference outputs
+```
+
+## System Requirements
+
+- Python 3.10+
+- PyTorch
+- CUDA-capable GPU recommended for training
+- 16GB+ RAM recommended
+- OpenCV and MoviePy for video processing
+
+## Results and Evaluation
+
+The repository supports both qualitative and quantitative evaluation:
+
+- qualitative samples saved during training;
+- side-by-side image comparison outputs;
+- video frame output folders;
+- PSNR and SSIM metrics through `utils/metrics.py`.
+
+## Good Next Improvements
+
+- Add sample before/after images directly to the README.
+- Add a small public fixture dataset for one-command smoke testing.
+- Add a model card describing training data, limitations, and failure cases.
+- Add reproducible experiment configs for different loss weights and mask sizes.
 
 ## License
 
-This project is for educational purposes as part of a Machine Learning course final project.
+This project was developed as an educational machine learning final project.
